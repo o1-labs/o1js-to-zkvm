@@ -1,11 +1,10 @@
 use std::fs;
 use std::str::FromStr;
 
-use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use mina_curves::pasta::Fp;
-use sp1_sdk::{include_elf, Elf, ProverClient, SP1Stdin};
+use sp1_sdk::{include_elf, Elf, Prover, ProverClient, SP1Stdin};
 
 const ELF: Elf = include_elf!("o1-verifier");
 
@@ -68,7 +67,7 @@ async fn main() {
     stdin.write(&public_input_bytes);
 
     // Execute in dev mode (no GPU required)
-    let client = ProverClient::builder().mock().build();
+    let client = ProverClient::builder().mock().build().await;
     let (_, report) = client
         .execute(ELF, stdin)
         .await
