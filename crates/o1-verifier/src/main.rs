@@ -46,14 +46,14 @@ pub fn main() {
 
     let group_map = <Vesta as CommitmentCurve>::Map::setup();
     let mut rng = rand::rngs::OsRng;
-    verify_with_rng::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>, _>(
+    let valid = verify_with_rng::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>, _>(
         &group_map,
         &vi,
         &proof,
         &public_input,
         &mut rng,
     )
-    .expect("kimchi proof verification failed");
+    .is_ok();
 
-    sp1_zkvm::io::commit(&true);
+    sp1_zkvm::io::commit(&valid);
 }
