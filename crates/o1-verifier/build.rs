@@ -2,7 +2,6 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::Arc;
 
 use kimchi::verifier_index::VerifierIndex;
 use mina_curves::pasta::{Fq, Vesta};
@@ -44,8 +43,15 @@ fn main() {
     )
     .expect("verificationKey is not valid UTF-8");
 
-    let mut vi: VestaVerifierIndex =
+    let _vi: VestaVerifierIndex =
         serde_json::from_str(&vk_json).expect("failed to deserialize VerifierIndex from JSON");
+
+    // VerifierIndex.srs is #[serde(skip)], so we serialize them separately.
+    // The guest will deserialize both and reassemble.
+
+    // Serialize VerifierIndex (without SRS) to msgpack
+    let vi_bytes =
+        rmp_serde::to_vec(&_vi).expect("failed to serialize VerifierIndex to msgpack");
 
     // Reconstruct the SRS from the circuit description points.
     // caml_fp_srs_get returns [h, g[0], g[1], ...], so srs[0] is h.
@@ -70,12 +76,13 @@ fn main() {
     let mut srs = SRS::<Vesta>::default();
     srs.h = h;
     srs.g = g;
-    vi.srs = Arc::new(srs);
 
-    // Serialize to MessagePack for compact binary embedding
-    let vk_bytes = rmp_serde::to_vec(&vi).expect("failed to serialize VerifierIndex to msgpack");
+    // Serialize SRS separately to msgpack
+    let srs_bytes = rmp_serde::to_vec(&srs).expect("failed to serialize SRS to msgpack");
 
     let out_dir = env::var("OUT_DIR").unwrap();
-    let dest = Path::new(&out_dir).join("verifier_index.bin");
-    fs::write(&dest, &vk_bytes).expect("failed to write verifier_index.bin");
+    fs::write(Path::new(&out_dir).join("verifier_index.bin"), &vi_bytes)
+        .expect("failed to write verifier_index.bin");
+    fs::write(Path::new(&out_dir).join("srs.bin"), &srs_bytes)
+        .expect("failed to write srs.bin");
 }
