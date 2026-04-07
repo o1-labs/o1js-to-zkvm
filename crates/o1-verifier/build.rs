@@ -47,21 +47,28 @@ fn main() {
     let mut vi: VestaVerifierIndex =
         serde_json::from_str(&vk_json).expect("failed to deserialize VerifierIndex from JSON");
 
-    // Reconstruct the SRS from the circuit description points
-    let g: Vec<Vesta> = circuit
-        .srs
-        .iter()
-        .map(|p| match p {
+    // Reconstruct the SRS from the circuit description points.
+    // caml_fp_srs_get returns [h, g[0], g[1], ...], so srs[0] is h.
+    let parse_point = |p: &SrsPoint| -> Vesta {
+        match p {
             SrsPoint::Infinity(()) => Vesta::default(),
             SrsPoint::Point { x, y } => {
                 let x = Fq::from_str(x).expect("invalid SRS x coordinate");
                 let y = Fq::from_str(y).expect("invalid SRS y coordinate");
                 Vesta::new_unchecked(x, y)
             }
-        })
-        .collect();
+        }
+    };
+
+    assert!(
+        circuit.srs.len() >= 2,
+        "SRS must have at least h + one g element"
+    );
+    let h = parse_point(&circuit.srs[0]);
+    let g: Vec<Vesta> = circuit.srs[1..].iter().map(parse_point).collect();
 
     let mut srs = SRS::<Vesta>::default();
+    srs.h = h;
     srs.g = g;
     vi.srs = Arc::new(srs);
 
