@@ -66,12 +66,16 @@ async fn main() {
     stdin.write(&proof_bytes);
     stdin.write(&public_input_bytes);
 
-    // Execute in dev mode (no GPU required)
-    let client = ProverClient::builder().mock().build().await;
-    let (_, report) = client
+    // Prover mode is set via SP1_PROVER env var (mock, cpu, cuda, network).
+    // Defaults to cpu. Use SP1_PROVER=mock for dev/testing without GPU.
+    let client = ProverClient::from_env().await;
+    let (mut public_values, report) = client
         .execute(ELF, stdin)
         .await
         .expect("execution failed");
+
+    let valid: bool = public_values.read();
+    assert!(valid, "Kimchi proof verification failed inside SP1 zkVM");
 
     println!("Kimchi proof verified successfully inside SP1 zkVM!");
     println!(
