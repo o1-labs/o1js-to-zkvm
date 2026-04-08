@@ -78,26 +78,22 @@ jobs:
         with:
           shared-key: "cargo-workspace"
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Cache SP1 toolchain
-        id: sp1-cache
+      - name: Cache SP1 + protoc
         uses: actions/cache@v4
         with:
           path: |
             ~/.sp1
             ~/.rustup/toolchains/succinct
-          key: sp1-v6.0.2-${{ runner.os }}
+            ~/.local/bin/protoc
+            ~/.local/include/google
+          key: sp1-v6.0.2-protoc-27.3-${{ runner.os }}
 
-      - name: Install SP1 toolchain
-        if: steps.sp1-cache.outputs.cache-hit != 'true'
+      - name: Install SP1 toolchain and protoc
+        run: make install
+
+      - name: Add SP1 and protoc to PATH
         run: |
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up
+          echo "$HOME/.sp1/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Add SP1 to PATH
-        run: echo "$HOME/.sp1/bin" >> $GITHUB_PATH
-
-      - run: npm ci
       - run: ./scripts/rust-e2e-test.sh
