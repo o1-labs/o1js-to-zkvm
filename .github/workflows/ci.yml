@@ -22,7 +22,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "cargo-workspace"
-      - run: npm ci
+      - run: make deps
       - run: make lint-check
 
   ts-unit-test:
@@ -33,7 +33,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - run: make deps
       - run: make ts-unit-tests
 
   ts-e2e-test:
@@ -44,7 +44,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - run: make deps
       - run: make build-ts
       - run: ./scripts/ts-e2e-test.sh
 

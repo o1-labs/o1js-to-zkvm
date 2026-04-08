@@ -1,4 +1,4 @@
-.PHONY: help install build-ts build-rust ts-unit-tests rust-unit-tests lint-check lint
+.PHONY: help install deps build-ts build-rust ts-unit-tests rust-unit-tests lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
@@ -7,9 +7,11 @@ CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 help: ## Show this help menu
 	@awk 'BEGIN {FS = ":.*?## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: ## Install SP1 toolchain, protoc, and npm dependencies
+install: deps ## Install SP1 toolchain, protoc, and npm dependencies
 	./install.sh
-	npm install
+
+deps: ## Install npm dependencies
+	npm ci
 
 build-ts: ## Build the TypeScript CLI (run as `npx o1js-cli ...`)
 	npm run build
