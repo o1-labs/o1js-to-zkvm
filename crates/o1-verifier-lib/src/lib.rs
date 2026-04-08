@@ -91,3 +91,10 @@ pub fn verify_kimchi_proof<R: rand::RngCore + rand::CryptoRng>(
     >(&group_map, vi, proof, public_input, rng)
     .is_ok()
 }
+
+// --- std-only: circuit JSON parsing ---
+
+#[cfg(feature = "std")]
+mod parse;
+#[cfg(feature = "std")]
+pub use parse::*;

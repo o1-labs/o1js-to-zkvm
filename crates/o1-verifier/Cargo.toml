@@ -10,13 +10,4 @@ rmp-serde = { version = "1", default-features = false }
 rand = { version = "0.8", default-features = false }
 
 [build-dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-ark-ff = "0.5"
-ark-ec = "0.5"
-kimchi = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
-poly-commitment = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
-mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
-mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
-rmp-serde = "1"
-base64 = "0.13"
+o1-verifier-lib = { path = "../o1-verifier-lib", features = ["std"] }

@@ -262,7 +262,6 @@ dependencies = [
  "educe",
  "fnv",
  "hashbrown 0.15.5",
- "rayon",
 ]
 
 [[package]]
@@ -1091,7 +1090,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 dependencies = [
  "powerfmt",
- "serde_core",
 ]
 
 [[package]]
@@ -1199,12 +1197,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
 ]
-
-[[package]]
-name = "dyn-clone"
-version = "1.0.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dynasm"
@@ -2072,7 +2064,6 @@ checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
 dependencies = [
  "autocfg",
  "hashbrown 0.12.3",
- "serde",
 ]
 
 [[package]]
@@ -2240,13 +2231,9 @@ dependencies = [
  "num-integer",
  "o1-utils",
  "poly-commitment",
- "rand 0.8.5",
  "rand_core 0.6.4",
- "rayon",
- "rmp-serde",
  "serde",
  "serde_with",
- "sha2",
  "strum",
  "strum_macros 0.26.4",
  "thiserror 2.0.18",
@@ -2431,7 +2418,6 @@ dependencies = [
  "mina-curves",
  "o1-utils",
  "rand 0.8.5",
- "rayon",
  "serde",
  "serde_with",
 ]
@@ -2663,11 +2649,8 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-integer",
  "rand 0.8.5",
- "rayon",
- "rmp-serde",
  "rustversion",
  "serde",
- "serde_json",
  "serde_with",
  "sha2",
  "spin 0.10.0",
@@ -2678,18 +2661,9 @@ dependencies = [
 name = "o1-verifier"
 version = "0.1.0"
 dependencies = [
- "ark-ec",
- "ark-ff 0.5.0",
- "base64 0.13.1",
- "kimchi",
- "mina-curves",
- "mina-poseidon",
  "o1-verifier-lib",
- "poly-commitment",
  "rand 0.8.5",
  "rmp-serde",
- "serde",
- "serde_json",
  "sp1-zkvm",
 ]
 
@@ -2714,7 +2688,6 @@ dependencies = [
 name = "o1-verifier-lib"
 version = "0.1.0"
 dependencies = [
- "ark-ec",
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "base64 0.13.1",
@@ -3221,8 +3194,6 @@ dependencies = [
  "o1-utils",
  "rand 0.8.5",
  "rand_core 0.6.4",
- "rayon",
- "rmp-serde",
  "serde",
  "serde_with",
  "thiserror 2.0.18",
@@ -3583,26 +3554,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ref-cast"
-version = "1.0.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f354300ae66f76f1c85c5f84693f0ce81d747e2c3f21a45fef496d89c960bf7d"
-dependencies = [
- "ref-cast-impl",
-]
-
-[[package]]
-name = "ref-cast-impl"
-version = "1.0.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7186006dcb21920990093f30e3dea63b7d6e977bf1256be20c3563a5db070da"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "regex"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3876,30 +3827,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "schemars"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cd191f9397d57d581cddd31014772520aa448f65ef991055d7f61582c65165f"
-dependencies = [
- "dyn-clone",
- "ref-cast",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "schemars"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
-dependencies = [
- "dyn-clone",
- "ref-cast",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4009,10 +3936,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "hex",
- "indexmap 1.9.3",
- "indexmap 2.13.1",
- "schemars 0.9.0",
- "schemars 1.2.1",
  "serde_core",
  "serde_json",
  "serde_with_macros",
