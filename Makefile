@@ -1,4 +1,4 @@
-.PHONY: help lint-check lint
+.PHONY: help install lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
@@ -6,6 +6,9 @@ CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
 help: ## Show this help menu
 	@awk 'BEGIN {FS = ":.*?## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+install: ## Install SP1 toolchain and protoc
+	./install.sh
 
 lint-check: ## Run all linters and formatters in check-only mode
 	npm run format:check
