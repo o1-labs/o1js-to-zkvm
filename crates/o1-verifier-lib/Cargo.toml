@@ -1,22 +1,26 @@
 [package]
-name = "o1-verifier"
+name = "o1-verifier-lib"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-o1-verifier-lib = { path = "../o1-verifier-lib" }
-sp1-zkvm = { workspace = true }
+kimchi = { workspace = true }
+poly-commitment = { workspace = true }
+mina-curves = { workspace = true }
+mina-poseidon = { workspace = true }
+groupmap = { workspace = true }
+serde = { workspace = true }
 rmp-serde = { version = "1", default-features = false }
+ark-serialize = { version = "0.5", default-features = false }
 rand = { version = "0.8", default-features = false }
 
-[build-dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-ark-ff = "0.5"
-ark-ec = "0.5"
+[dev-dependencies]
 kimchi = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
 poly-commitment = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
 mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
 mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
-rmp-serde = "1"
+serde_json = "1"
 base64 = "0.13"
+ark-ff = "0.5"
+ark-ec = "0.5"
+rand = "0.8"

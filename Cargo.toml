@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/o1-verifier", "crates/o1-verifier-host"]
+members = ["crates/o1-verifier", "crates/o1-verifier-host", "crates/o1-verifier-lib"]
 
 [workspace.dependencies]
 kimchi = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa", default-features = false }
