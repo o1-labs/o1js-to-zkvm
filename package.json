@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "main": "dist/src/cube-root.js",
+  "bin": {
+    "o1zkvm": "dist/src/cli.js"
+  },
   "scripts": {
     "build": "tsc",
     "lint": "eslint src test && tsc --noEmit",
