@@ -1,4 +1,4 @@
-.PHONY: help install lint-check lint
+.PHONY: help install build-ts lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
@@ -9,6 +9,9 @@ help: ## Show this help menu
 
 install: ## Install SP1 toolchain and protoc
 	./install.sh
+
+build-ts: ## Build the TypeScript CLI
+	npm run build
 
 lint-check: ## Run all linters and formatters in check-only mode
 	npm run format:check
