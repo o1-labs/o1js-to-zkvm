@@ -45,8 +45,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: make deps
-      - run: make build-ts
-      - run: ./scripts/ts-e2e-test.sh
+      - run: make ts-e2e-tests
 
   rust-unit-test:
     runs-on: ubuntu-latest
@@ -96,4 +95,4 @@ jobs:
           echo "$HOME/.sp1/bin" >> $GITHUB_PATH
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - run: ./scripts/rust-e2e-test.sh
+      - run: make rust-e2e-tests

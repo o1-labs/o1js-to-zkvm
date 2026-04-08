@@ -1,4 +1,4 @@
-.PHONY: help install deps build-ts build-rust ts-unit-tests rust-unit-tests lint-check lint
+.PHONY: help install deps build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
@@ -26,6 +26,12 @@ ts-unit-tests: build-ts ## Run TypeScript unit tests
 
 rust-unit-tests: ## Run native Rust unit and integration tests against the checked-in fixtures
 	cargo test --release -p o1-verifier-lib --features std
+
+ts-e2e-tests: build-ts ## Run the TypeScript CLI end-to-end script
+	./scripts/ts-e2e-test.sh
+
+rust-e2e-tests: ## Run the full Rust+SP1 end-to-end script
+	./scripts/rust-e2e-test.sh
 
 lint-check: ## Run all linters and formatters in check-only mode
 	npm run format:check
