@@ -22,7 +22,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "cargo-workspace"
-      - run: make deps
+      - name: Cache SP1 + protoc
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sp1
+            ~/.rustup/toolchains/succinct
+            ~/.local/bin/protoc
+            ~/.local/include/google
+          key: sp1-v6.0.2-protoc-27.3-${{ runner.os }}
+      - name: Install SP1 toolchain and protoc
+        run: make install
+      - name: Add SP1 and protoc to PATH
+        run: |
+          echo "$HOME/.sp1/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - run: make lint-check
 
   ts-unit-test:
