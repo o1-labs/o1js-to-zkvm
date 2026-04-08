@@ -37,10 +37,14 @@ lint-check: ## Run all linters and formatters in check-only mode
 	npm run format:check
 	npm run lint
 	cargo fmt --all -- --check
+	# Build the host first so the guest ELF exists for include_elf!
+	# (clippy skips build scripts, so we need to build separately)
+	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
 	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo clippy --all-targets --features std -- -D warnings
 
 lint: ## Run all linters and formatters with auto-fix
 	npm run format
 	npm run lint
 	cargo fmt --all
+	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
 	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo clippy --all-targets --features std --fix --allow-dirty --allow-staged -- -D warnings
