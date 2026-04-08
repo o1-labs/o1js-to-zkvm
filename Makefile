@@ -1,4 +1,4 @@
-.PHONY: help install build-ts build-rust rust-unit-tests lint-check lint
+.PHONY: help install build-ts build-rust ts-unit-tests rust-unit-tests lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
@@ -18,6 +18,9 @@ build-ts: ## Build the TypeScript CLI (run as `npx o1js-cli ...`)
 build-rust: ## Build the o1zkvm Rust binary (requires CIRCUIT_JSON env var)
 	@if [ -z "$$CIRCUIT_JSON" ]; then echo "error: CIRCUIT_JSON must be set" >&2; exit 1; fi
 	cargo build --release -p o1-verifier-host
+
+ts-unit-tests: build-ts ## Run TypeScript unit tests
+	npm test
 
 rust-unit-tests: ## Run native Rust unit and integration tests against the checked-in fixtures
 	cargo test --release -p o1-verifier-lib --features std
