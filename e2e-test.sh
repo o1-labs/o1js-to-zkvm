@@ -16,7 +16,7 @@ npx o1js-cli compile -o "$WORK_DIR/circuit.json"
 
 # Step 3: Build the o1zkvm host CLI (guest embeds circuit.json at compile time)
 echo "==> Building o1zkvm..."
-CIRCUIT_JSON="$WORK_DIR/circuit.json" make build-o1zkvm
+CIRCUIT_JSON="$WORK_DIR/circuit.json" make build-rust
 
 # Step 4: Generate a proof and verify with TS CLI
 echo "==> Generating proof..."

@@ -1,4 +1,4 @@
-.PHONY: help install build-ts build-o1zkvm lint-check lint
+.PHONY: help install build-ts build-rust lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
@@ -15,7 +15,7 @@ build-ts: ## Build the TypeScript CLI (run as `npx o1js-cli ...`)
 	npm run build
 	chmod +x dist/src/cli.js
 
-build-o1zkvm: ## Build the o1zkvm SP1 host CLI (requires CIRCUIT_JSON env var)
+build-rust: ## Build the o1zkvm Rust binary (requires CIRCUIT_JSON env var)
 	@if [ -z "$$CIRCUIT_JSON" ]; then echo "error: CIRCUIT_JSON must be set" >&2; exit 1; fi
 	cargo build --release -p o1-verifier-host
 
