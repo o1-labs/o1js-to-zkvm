@@ -20,3 +20,24 @@ jobs:
       - run: npm ci
       - run: npm run format:check
       - run: npm run lint
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.92.0"
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cargo-workspace"
+
+      - run: cargo fmt --all -- --check
+      - name: cargo clippy
+        env:
+          CIRCUIT_JSON: ${{ github.workspace }}/fixtures/circuit.json
+        run: cargo clippy --all-targets --features std -- -D warnings

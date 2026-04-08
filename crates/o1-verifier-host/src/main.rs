@@ -34,7 +34,8 @@ fn serialize_public_inputs(fields: &[Fp]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(fields.len() * 32);
     for f in fields {
         let mut buf = Vec::new();
-        f.serialize_compressed(&mut buf).expect("failed to serialize Fp");
+        f.serialize_compressed(&mut buf)
+            .expect("failed to serialize Fp");
         bytes.extend_from_slice(&buf);
     }
     bytes
@@ -69,17 +70,11 @@ async fn main() {
     // Prover mode is set via SP1_PROVER env var (mock, cpu, cuda, network).
     // Defaults to cpu. Use SP1_PROVER=mock for dev/testing without GPU.
     let client = ProverClient::from_env().await;
-    let (mut public_values, report) = client
-        .execute(ELF, stdin)
-        .await
-        .expect("execution failed");
+    let (mut public_values, report) = client.execute(ELF, stdin).await.expect("execution failed");
 
     let valid: bool = public_values.read();
     assert!(valid, "Kimchi proof verification failed inside SP1 zkVM");
 
     println!("Kimchi proof verified successfully inside SP1 zkVM!");
-    println!(
-        "Execution used {} cycles",
-        report.total_instruction_count()
-    );
+    println!("Execution used {} cycles", report.total_instruction_count());
 }

@@ -19,6 +19,5 @@ fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     fs::write(Path::new(&out_dir).join("verifier_index.bin"), &vi_bytes)
         .expect("failed to write verifier_index.bin");
-    fs::write(Path::new(&out_dir).join("srs.bin"), &srs_bytes)
-        .expect("failed to write srs.bin");
+    fs::write(Path::new(&out_dir).join("srs.bin"), &srs_bytes).expect("failed to write srs.bin");
 }

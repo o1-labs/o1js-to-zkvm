@@ -25,7 +25,7 @@ pub type VestaProof = ProverProof<Vesta, OpeningProof<Vesta, FULL_ROUNDS>, FULL_
 
 pub fn deserialize_public_inputs(bytes: &[u8]) -> Vec<Fp> {
     assert!(
-        bytes.len() % 32 == 0,
+        bytes.len().is_multiple_of(32),
         "public input bytes must be a multiple of 32"
     );
     bytes
@@ -58,15 +58,13 @@ pub fn feature_flags_from_vi(vi: &VestaVerifierIndex) -> FeatureFlags {
 pub fn load_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> VestaVerifierIndex {
     let mut vi: VestaVerifierIndex =
         rmp_serde::from_slice(vi_bytes).expect("failed to deserialize VerifierIndex");
-    let srs: SRS<Vesta> =
-        rmp_serde::from_slice(srs_bytes).expect("failed to deserialize SRS");
+    let srs: SRS<Vesta> = rmp_serde::from_slice(srs_bytes).expect("failed to deserialize SRS");
     vi.srs = Arc::new(srs);
 
     let (_, endo) = Vesta::endos();
     vi.endo = *endo;
     let feature_flags = feature_flags_from_vi(&vi);
-    let (linearization, powers_of_alpha) =
-        expr_linearization::<Fp>(Some(&feature_flags), true);
+    let (linearization, powers_of_alpha) = expr_linearization::<Fp>(Some(&feature_flags), true);
     vi.linearization = linearization;
     vi.powers_of_alpha = powers_of_alpha;
 

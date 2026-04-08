@@ -74,11 +74,9 @@ pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
 /// Parse a proof JSON and return the raw proof bytes (msgpack) and
 /// serialized public inputs (32 bytes per Fp element, canonical form).
 pub fn parse_proof_json(proof_json: &str) -> (Vec<u8>, Vec<u8>) {
-    let output: ProofOutput =
-        serde_json::from_str(proof_json).expect("failed to parse proof JSON");
+    let output: ProofOutput = serde_json::from_str(proof_json).expect("failed to parse proof JSON");
 
-    let proof_bytes =
-        base64::decode(&output.proof.proof).expect("invalid base64 in proof");
+    let proof_bytes = base64::decode(&output.proof.proof).expect("invalid base64 in proof");
 
     let public_input: Vec<Fp> = output
         .proof

@@ -1,5 +1,3 @@
-use std::fs;
-
 use o1_verifier_lib::{
     deserialize_public_inputs, load_verifier_index, parse_circuit_json, parse_proof_json,
     verify_kimchi_proof, VestaProof,
