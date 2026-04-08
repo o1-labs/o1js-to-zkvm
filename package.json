@@ -4,7 +4,7 @@
   "description": "",
   "main": "dist/src/cube-root.js",
   "bin": {
-    "o1zkvm": "dist/src/cli.js"
+    "o1js-cli": "dist/src/cli.js"
   },
   "scripts": {
     "build": "tsc",

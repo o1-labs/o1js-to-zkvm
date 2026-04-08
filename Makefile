@@ -1,19 +1,23 @@
-.PHONY: help install build-ts lint-check lint
+.PHONY: help install build-ts build-o1zkvm lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
 .DEFAULT_GOAL := help
 
 help: ## Show this help menu
-	@awk 'BEGIN {FS = ":.*?## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Install SP1 toolchain, protoc, and npm dependencies
 	./install.sh
 	npm install
 
-build-ts: ## Build the TypeScript CLI (run as `npx o1zkvm ...`)
+build-ts: ## Build the TypeScript CLI (run as `npx o1js-cli ...`)
 	npm run build
 	chmod +x dist/src/cli.js
+
+build-o1zkvm: ## Build the o1zkvm SP1 host CLI (requires CIRCUIT_JSON env var)
+	@if [ -z "$$CIRCUIT_JSON" ]; then echo "error: CIRCUIT_JSON must be set" >&2; exit 1; fi
+	cargo build --release -p o1-verifier-host
 
 lint-check: ## Run all linters and formatters in check-only mode
 	npm run format:check

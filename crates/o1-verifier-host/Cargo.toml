@@ -3,6 +3,10 @@ name = "o1-verifier-host"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "o1zkvm"
+path = "src/main.rs"
+
 [dependencies]
 sp1-sdk = { workspace = true }
 serde = { workspace = true }
