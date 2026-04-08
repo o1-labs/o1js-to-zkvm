@@ -16,7 +16,7 @@ npm run cli -- compile -o "$WORK_DIR/circuit.json"
 
 # Step 3: Build the Rust workspace (guest embeds circuit.json at compile time)
 echo "==> Building Rust workspace..."
-CIRCUIT_JSON="$WORK_DIR/circuit.json" cargo build -p o1-verifier-host
+CIRCUIT_JSON="$WORK_DIR/circuit.json" cargo build --release -p o1-verifier-host
 
 # Step 4: Generate a proof and verify with TS CLI
 echo "==> Generating proof..."
@@ -31,6 +31,6 @@ npm run cli -- verify -c "$WORK_DIR/circuit.json" -p "$WORK_DIR/proof.json"
 # Step 5: Verify inside SP1 zkVM (mock mode)
 echo "==> Verifying inside SP1 zkVM (mock mode)..."
 SP1_PROVER=mock CIRCUIT_JSON="$WORK_DIR/circuit.json" \
-  cargo run -p o1-verifier-host -- --proof "$WORK_DIR/proof.json"
+  cargo run --release -p o1-verifier-host -- --proof "$WORK_DIR/proof.json"
 
 echo "==> All e2e tests passed!"
