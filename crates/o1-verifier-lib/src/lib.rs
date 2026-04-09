@@ -23,6 +23,7 @@ pub mod pickles_lowering;
 pub mod pickles_parse;
 pub mod pickles_types;
 pub mod pickles_verify;
+pub use pickles_lowering::*;
 
 pub type SpongeParams = PlonkSpongeConstantsKimchi;
 pub type BaseSponge = DefaultFqSponge<VestaParameters, SpongeParams, FULL_ROUNDS>;

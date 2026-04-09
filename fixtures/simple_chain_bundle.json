@@ -11,20 +11,20 @@
         "name": "base_case",
         "statement": "0",
         "statement_fields": ["0"],
-        "side_loaded_proof_base64": "BAUG",
+        "side_loaded_proof_base64": "KChzdGF0ZW1lbnQoKHByb29mX3N0YXRlKChkZWZlcnJlZF92YWx1ZXMoKGJyYW5jaF9kYXRhKChwcm9vZnNfdmVyaWZpZWQgTjApKGRvbWFpbl9sb2cyICJcMDE2IikpKSkpKHNwb25nZV9kaWdlc3RfYmVmb3JlX2V2YWx1YXRpb25zIGRpZ2VzdDApKG1lc3NhZ2VzX2Zvcl9uZXh0X3dyYXBfcHJvb2YoKGNoYWxsZW5nZV9wb2x5bm9taWFsX2NvbW1pdG1lbnQoMHgxMSAweDEyKSkob2xkX2J1bGxldHByb29mX2NoYWxsZW5nZXMoKSkpKSkpKG1lc3NhZ2VzX2Zvcl9uZXh0X3N0ZXBfcHJvb2YoKGFwcF9zdGF0ZSgpKShjaGFsbGVuZ2VfcG9seW5vbWlhbF9jb21taXRtZW50cygoMHgyMSAweDIyKSkpKG9sZF9idWxsZXRwcm9vZl9jaGFsbGVuZ2VzKCkpKSkpKShwcmV2X2V2YWxzKChldmFscygocHVibGljX2lucHV0KDB4MzEgMHgzMikpKSkoZnRfZXZhbDEgMHgzMykpKShwcm9vZigobWVzc2FnZXMoKSkob3BlbmluZ3MoKSkpKSk=",
         "rust_inputs": {
           "statement_field_strings": ["0"],
-          "side_loaded_proof_base64": "BAUG"
+          "side_loaded_proof_base64": "KChzdGF0ZW1lbnQoKHByb29mX3N0YXRlKChkZWZlcnJlZF92YWx1ZXMoKGJyYW5jaF9kYXRhKChwcm9vZnNfdmVyaWZpZWQgTjApKGRvbWFpbl9sb2cyICJcMDE2IikpKSkpKHNwb25nZV9kaWdlc3RfYmVmb3JlX2V2YWx1YXRpb25zIGRpZ2VzdDApKG1lc3NhZ2VzX2Zvcl9uZXh0X3dyYXBfcHJvb2YoKGNoYWxsZW5nZV9wb2x5bm9taWFsX2NvbW1pdG1lbnQoMHgxMSAweDEyKSkob2xkX2J1bGxldHByb29mX2NoYWxsZW5nZXMoKSkpKSkpKG1lc3NhZ2VzX2Zvcl9uZXh0X3N0ZXBfcHJvb2YoKGFwcF9zdGF0ZSgpKShjaGFsbGVuZ2VfcG9seW5vbWlhbF9jb21taXRtZW50cygoMHgyMSAweDIyKSkpKG9sZF9idWxsZXRwcm9vZl9jaGFsbGVuZ2VzKCkpKSkpKShwcmV2X2V2YWxzKChldmFscygocHVibGljX2lucHV0KDB4MzEgMHgzMikpKSkoZnRfZXZhbDEgMHgzMykpKShwcm9vZigobWVzc2FnZXMoKSkob3BlbmluZ3MoKSkpKSk="
         }
       },
       {
         "name": "recursive_step",
         "statement": "1",
         "statement_fields": ["1"],
-        "side_loaded_proof_base64": "BwgJ",
+        "side_loaded_proof_base64": "KChzdGF0ZW1lbnQoKHByb29mX3N0YXRlKChkZWZlcnJlZF92YWx1ZXMoKGJyYW5jaF9kYXRhKChwcm9vZnNfdmVyaWZpZWQgTjEpKGRvbWFpbl9sb2cyICJcMDE3IikpKSkpKHNwb25nZV9kaWdlc3RfYmVmb3JlX2V2YWx1YXRpb25zIGRpZ2VzdDEpKG1lc3NhZ2VzX2Zvcl9uZXh0X3dyYXBfcHJvb2YoKGNoYWxsZW5nZV9wb2x5bm9taWFsX2NvbW1pdG1lbnQoMHg0MSAweDQyKSkob2xkX2J1bGxldHByb29mX2NoYWxsZW5nZXMoKGR1bW15X2NoYWxzKSkpKSkpKShtZXNzYWdlc19mb3JfbmV4dF9zdGVwX3Byb29mKChhcHBfc3RhdGUoKSkoY2hhbGxlbmdlX3BvbHlub21pYWxfY29tbWl0bWVudHMoKDB4NTEgMHg1MikpKCgweDUzIDB4NTQpKSkob2xkX2J1bGxldHByb29mX2NoYWxsZW5nZXMoKGJwMSkoYnAyKSkpKSkpKShwcmV2X2V2YWxzKChldmFscygocHVibGljX2lucHV0KDB4NjEgMHg2MikpKSkoZnRfZXZhbDEgMHg2MykpKShwcm9vZigobWVzc2FnZXMoKSkob3BlbmluZ3MoKSkpKSk=",
         "rust_inputs": {
           "statement_field_strings": ["1"],
-          "side_loaded_proof_base64": "BwgJ"
+          "side_loaded_proof_base64": "KChzdGF0ZW1lbnQoKHByb29mX3N0YXRlKChkZWZlcnJlZF92YWx1ZXMoKGJyYW5jaF9kYXRhKChwcm9vZnNfdmVyaWZpZWQgTjEpKGRvbWFpbl9sb2cyICJcMDE3IikpKSkpKHNwb25nZV9kaWdlc3RfYmVmb3JlX2V2YWx1YXRpb25zIGRpZ2VzdDEpKG1lc3NhZ2VzX2Zvcl9uZXh0X3dyYXBfcHJvb2YoKGNoYWxsZW5nZV9wb2x5bm9taWFsX2NvbW1pdG1lbnQoMHg0MSAweDQyKSkob2xkX2J1bGxldHByb29mX2NoYWxsZW5nZXMoKGR1bW15X2NoYWxzKSkpKSkpKShtZXNzYWdlc19mb3JfbmV4dF9zdGVwX3Byb29mKChhcHBfc3RhdGUoKSkoY2hhbGxlbmdlX3BvbHlub21pYWxfY29tbWl0bWVudHMoKDB4NTEgMHg1MikpKCgweDUzIDB4NTQpKSkob2xkX2J1bGxldHByb29mX2NoYWxsZW5nZXMoKGJwMSkoYnAyKSkpKSkpKShwcmV2X2V2YWxzKChldmFscygocHVibGljX2lucHV0KDB4NjEgMHg2MikpKSkoZnRfZXZhbDEgMHg2MykpKShwcm9vZigobWVzc2FnZXMoKSkob3BlbmluZ3MoKSkpKSk="
         }
       }
     ]

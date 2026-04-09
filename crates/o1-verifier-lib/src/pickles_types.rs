@@ -13,6 +13,25 @@ pub struct SideLoadedVkBytes(pub Vec<u8>);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SideLoadedProofBytes(pub Vec<u8>);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurvePointHex {
+    pub x: String,
+    pub y: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SideLoadedProofMetadata {
+    pub proofs_verified: u8,
+    pub domain_log2: u8,
+    pub sponge_digest_before_evaluations: Vec<String>,
+    pub wrap_challenge_polynomial_commitment: CurvePointHex,
+    pub wrap_old_bulletproof_challenges_count: usize,
+    pub next_step_challenge_polynomial_commitments: Vec<CurvePointHex>,
+    pub next_step_old_bulletproof_challenges_count: usize,
+    pub prev_evals_public_input: Vec<String>,
+    pub ft_eval1: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SimpleChainStatement {
     pub value: Fp,

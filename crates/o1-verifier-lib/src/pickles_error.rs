@@ -9,6 +9,9 @@ pub enum PicklesError {
     InvalidBase64(&'static str),
     InvalidFieldElement(String),
     MissingFixture(String),
+    InvalidProofText(&'static str),
+    InvalidSexp(String),
+    MissingProofField(&'static str),
     UnsupportedStatementShape { expected: usize, actual: usize },
     LoweringNotImplemented(&'static str),
 }
@@ -22,6 +25,9 @@ impl fmt::Display for PicklesError {
                 write!(f, "invalid field element: {value}")
             }
             Self::MissingFixture(name) => write!(f, "missing fixture: {name}"),
+            Self::InvalidProofText(field) => write!(f, "invalid UTF-8 in {field}"),
+            Self::InvalidSexp(err) => write!(f, "invalid S-expression: {err}"),
+            Self::MissingProofField(field) => write!(f, "missing proof field: {field}"),
             Self::UnsupportedStatementShape { expected, actual } => {
                 write!(
                     f,
