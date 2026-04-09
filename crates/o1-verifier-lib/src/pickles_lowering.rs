@@ -1,14 +1,16 @@
 extern crate alloc;
 
-use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use mina_curves::pasta::Fp;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::PicklesVerifyRequest;
-use crate::pickles_types::{CurvePointHex, SideLoadedProofMetadata};
 use crate::{VestaProof, VestaVerifierIndex};
+#[cfg(feature = "std")]
+use alloc::string::{String, ToString};
+#[cfg(feature = "std")]
+use crate::pickles_types::{CurvePointHex, SideLoadedProofMetadata};
 
 pub struct LoweredWrapInstance {
     pub verifier_index: VestaVerifierIndex,
@@ -17,11 +19,8 @@ pub struct LoweredWrapInstance {
 }
 
 pub fn lower_simple_chain_request(
-    request: &PicklesVerifyRequest,
+    _request: &PicklesVerifyRequest,
 ) -> Result<LoweredWrapInstance, PicklesError> {
-    #[cfg(feature = "std")]
-    let _metadata = lower_simple_chain_metadata(request)?;
-
     Err(PicklesError::LoweringNotImplemented(
         "Pickles side-loaded proof/VK lowering reaches decoded proof metadata, but wrap verification-key decoding and full Kimchi reconstruction are not implemented yet",
     ))
@@ -38,9 +37,11 @@ pub fn lower_simple_chain_metadata(
 fn decode_side_loaded_proof_metadata(
     proof_bytes: &[u8],
 ) -> Result<SideLoadedProofMetadata, PicklesError> {
-    let proof_text =
-        core::str::from_utf8(proof_bytes).map_err(|_| PicklesError::InvalidProofText("proof"))?;
-    let sexp = sexp::parse(proof_text).map_err(|err| PicklesError::InvalidSexp(err.to_string()))?;
+    let proof_text = normalize_proof_text(
+        core::str::from_utf8(proof_bytes).map_err(|_| PicklesError::InvalidProofText("proof"))?,
+    );
+    let sexp =
+        sexp::parse(&proof_text).map_err(|err| PicklesError::InvalidSexp(err.to_string()))?;
 
     let top = list_items(&sexp)?;
     let statement = group_entries(top, "statement")?;
@@ -94,6 +95,11 @@ fn decode_side_loaded_proof_metadata(
             .collect::<Result<Vec<_>, _>>()?,
         ft_eval1: atom_owned(binding_one(prev_evals, "ft_eval1")?)?,
     })
+}
+
+#[cfg(feature = "std")]
+fn normalize_proof_text(proof_text: &str) -> String {
+    proof_text.replace("domain_log2\"", "domain_log2 \"")
 }
 
 #[cfg(feature = "std")]
