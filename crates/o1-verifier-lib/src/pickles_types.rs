@@ -20,16 +20,68 @@ pub struct CurvePointHex {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BulletproofChallengeHex {
+    pub prechallenge_inner: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlonkFeatureFlags {
+    pub range_check0: bool,
+    pub range_check1: bool,
+    pub foreign_field_add: bool,
+    pub foreign_field_mul: bool,
+    pub xor: bool,
+    pub rot: bool,
+    pub lookup: bool,
+    pub runtime_tables: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlonkDeferredValuesHex {
+    pub alpha_inner: Vec<String>,
+    pub beta: Vec<String>,
+    pub gamma: Vec<String>,
+    pub zeta_inner: Vec<String>,
+    pub joint_combiner_inner: Option<Vec<String>>,
+    pub feature_flags: PlonkFeatureFlags,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedSectionCount {
+    pub name: String,
+    pub count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InnerProofMetadata {
+    pub w_comm_count: usize,
+    pub z_comm_count: usize,
+    pub t_comm_count: usize,
+    pub lookup_present: bool,
+    pub evaluation_sections: Vec<NamedSectionCount>,
+    pub ft_eval1: String,
+    pub lr_count: usize,
+    pub z_1: String,
+    pub z_2: String,
+    pub delta: CurvePointHex,
+    pub challenge_polynomial_commitment: CurvePointHex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SideLoadedProofMetadata {
     pub proofs_verified: u8,
     pub domain_log2: u8,
+    pub plonk: PlonkDeferredValuesHex,
+    pub deferred_bulletproof_challenges: Vec<BulletproofChallengeHex>,
     pub sponge_digest_before_evaluations: Vec<String>,
     pub wrap_challenge_polynomial_commitment: CurvePointHex,
-    pub wrap_old_bulletproof_challenges_count: usize,
+    pub wrap_old_bulletproof_challenges: Vec<Vec<BulletproofChallengeHex>>,
     pub next_step_challenge_polynomial_commitments: Vec<CurvePointHex>,
-    pub next_step_old_bulletproof_challenges_count: usize,
+    pub next_step_old_bulletproof_challenges: Vec<Vec<BulletproofChallengeHex>>,
     pub prev_evals_public_input: Vec<String>,
+    pub prev_evals_sections: Vec<NamedSectionCount>,
     pub ft_eval1: String,
+    pub inner_proof: InnerProofMetadata,
 }
 
 #[derive(Clone, Debug, PartialEq)]

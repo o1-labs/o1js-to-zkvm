@@ -32,19 +32,71 @@ struct FixtureOutput {
 struct FixtureMetadataOutput {
     proofs_verified: u8,
     domain_log2: u8,
+    plonk: PlonkDeferredValuesOutput,
+    deferred_bulletproof_challenges: Vec<BulletproofChallengeOutput>,
     sponge_digest_before_evaluations: Vec<String>,
     wrap_challenge_polynomial_commitment: PointOutput,
-    wrap_old_bulletproof_challenges_count: usize,
+    wrap_old_bulletproof_challenges: Vec<Vec<BulletproofChallengeOutput>>,
     next_step_challenge_polynomial_commitments: Vec<PointOutput>,
-    next_step_old_bulletproof_challenges_count: usize,
+    next_step_old_bulletproof_challenges: Vec<Vec<BulletproofChallengeOutput>>,
     prev_evals_public_input: Vec<String>,
+    prev_evals_sections: Vec<NamedSectionCountOutput>,
     ft_eval1: String,
+    inner_proof: InnerProofOutput,
 }
 
 #[derive(Serialize)]
 struct PointOutput {
     x: String,
     y: String,
+}
+
+#[derive(Serialize)]
+struct BulletproofChallengeOutput {
+    prechallenge_inner: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct PlonkFeatureFlagsOutput {
+    range_check0: bool,
+    range_check1: bool,
+    foreign_field_add: bool,
+    foreign_field_mul: bool,
+    xor: bool,
+    rot: bool,
+    lookup: bool,
+    runtime_tables: bool,
+}
+
+#[derive(Serialize)]
+struct PlonkDeferredValuesOutput {
+    alpha_inner: Vec<String>,
+    beta: Vec<String>,
+    gamma: Vec<String>,
+    zeta_inner: Vec<String>,
+    joint_combiner_inner: Option<Vec<String>>,
+    feature_flags: PlonkFeatureFlagsOutput,
+}
+
+#[derive(Serialize)]
+struct NamedSectionCountOutput {
+    name: String,
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct InnerProofOutput {
+    w_comm_count: usize,
+    z_comm_count: usize,
+    t_comm_count: usize,
+    lookup_present: bool,
+    evaluation_sections: Vec<NamedSectionCountOutput>,
+    ft_eval1: String,
+    lr_count: usize,
+    z_1: String,
+    z_2: String,
+    delta: PointOutput,
+    challenge_polynomial_commitment: PointOutput,
 }
 
 fn usage(program: &str) -> String {
@@ -87,13 +139,47 @@ fn main() -> ExitCode {
                 .map(|metadata| FixtureMetadataOutput {
                     proofs_verified: metadata.proofs_verified,
                     domain_log2: metadata.domain_log2,
+                    plonk: PlonkDeferredValuesOutput {
+                        alpha_inner: metadata.plonk.alpha_inner,
+                        beta: metadata.plonk.beta,
+                        gamma: metadata.plonk.gamma,
+                        zeta_inner: metadata.plonk.zeta_inner,
+                        joint_combiner_inner: metadata.plonk.joint_combiner_inner,
+                        feature_flags: PlonkFeatureFlagsOutput {
+                            range_check0: metadata.plonk.feature_flags.range_check0,
+                            range_check1: metadata.plonk.feature_flags.range_check1,
+                            foreign_field_add: metadata.plonk.feature_flags.foreign_field_add,
+                            foreign_field_mul: metadata.plonk.feature_flags.foreign_field_mul,
+                            xor: metadata.plonk.feature_flags.xor,
+                            rot: metadata.plonk.feature_flags.rot,
+                            lookup: metadata.plonk.feature_flags.lookup,
+                            runtime_tables: metadata.plonk.feature_flags.runtime_tables,
+                        },
+                    },
+                    deferred_bulletproof_challenges: metadata
+                        .deferred_bulletproof_challenges
+                        .into_iter()
+                        .map(|challenge| BulletproofChallengeOutput {
+                            prechallenge_inner: challenge.prechallenge_inner,
+                        })
+                        .collect(),
                     sponge_digest_before_evaluations: metadata.sponge_digest_before_evaluations,
                     wrap_challenge_polynomial_commitment: PointOutput {
                         x: metadata.wrap_challenge_polynomial_commitment.x,
                         y: metadata.wrap_challenge_polynomial_commitment.y,
                     },
-                    wrap_old_bulletproof_challenges_count: metadata
-                        .wrap_old_bulletproof_challenges_count,
+                    wrap_old_bulletproof_challenges: metadata
+                        .wrap_old_bulletproof_challenges
+                        .into_iter()
+                        .map(|group| {
+                            group
+                                .into_iter()
+                                .map(|challenge| BulletproofChallengeOutput {
+                                    prechallenge_inner: challenge.prechallenge_inner,
+                                })
+                                .collect()
+                        })
+                        .collect(),
                     next_step_challenge_polynomial_commitments: metadata
                         .next_step_challenge_polynomial_commitments
                         .into_iter()
@@ -102,10 +188,55 @@ fn main() -> ExitCode {
                             y: point.y,
                         })
                         .collect(),
-                    next_step_old_bulletproof_challenges_count: metadata
-                        .next_step_old_bulletproof_challenges_count,
+                    next_step_old_bulletproof_challenges: metadata
+                        .next_step_old_bulletproof_challenges
+                        .into_iter()
+                        .map(|group| {
+                            group
+                                .into_iter()
+                                .map(|challenge| BulletproofChallengeOutput {
+                                    prechallenge_inner: challenge.prechallenge_inner,
+                                })
+                                .collect()
+                        })
+                        .collect(),
                     prev_evals_public_input: metadata.prev_evals_public_input,
+                    prev_evals_sections: metadata
+                        .prev_evals_sections
+                        .into_iter()
+                        .map(|section| NamedSectionCountOutput {
+                            name: section.name,
+                            count: section.count,
+                        })
+                        .collect(),
                     ft_eval1: metadata.ft_eval1,
+                    inner_proof: InnerProofOutput {
+                        w_comm_count: metadata.inner_proof.w_comm_count,
+                        z_comm_count: metadata.inner_proof.z_comm_count,
+                        t_comm_count: metadata.inner_proof.t_comm_count,
+                        lookup_present: metadata.inner_proof.lookup_present,
+                        evaluation_sections: metadata
+                            .inner_proof
+                            .evaluation_sections
+                            .into_iter()
+                            .map(|section| NamedSectionCountOutput {
+                                name: section.name,
+                                count: section.count,
+                            })
+                            .collect(),
+                        ft_eval1: metadata.inner_proof.ft_eval1,
+                        lr_count: metadata.inner_proof.lr_count,
+                        z_1: metadata.inner_proof.z_1,
+                        z_2: metadata.inner_proof.z_2,
+                        delta: PointOutput {
+                            x: metadata.inner_proof.delta.x,
+                            y: metadata.inner_proof.delta.y,
+                        },
+                        challenge_polynomial_commitment: PointOutput {
+                            x: metadata.inner_proof.challenge_polynomial_commitment.x,
+                            y: metadata.inner_proof.challenge_polynomial_commitment.y,
+                        },
+                    },
                 })
                 .map_err(|err| err.to_string());
 
