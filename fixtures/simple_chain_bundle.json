@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "proof_system": "mina.pickles.simple_chain",
+  "statement_kind": "single_field",
+  "side_loaded_verification_key_base64": "AQID",
+  "rust_bundle": {
+    "bundle_version": 1,
+    "side_loaded_verification_key_base64": "AQID",
+    "fixtures": [
+      {
+        "name": "base_case",
+        "statement": "0",
+        "statement_fields": ["0"],
+        "side_loaded_proof_base64": "BAUG",
+        "rust_inputs": {
+          "statement_field_strings": ["0"],
+          "side_loaded_proof_base64": "BAUG"
+        }
+      },
+      {
+        "name": "recursive_step",
+        "statement": "1",
+        "statement_fields": ["1"],
+        "side_loaded_proof_base64": "BwgJ",
+        "rust_inputs": {
+          "statement_field_strings": ["1"],
+          "side_loaded_proof_base64": "BwgJ"
+        }
+      }
+    ]
+  }
+}

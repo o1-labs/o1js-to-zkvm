@@ -17,6 +17,13 @@ use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge};
 use poly_commitment::commitment::CommitmentCurve;
 use poly_commitment::ipa::{OpeningProof, SRS};
 
+pub mod pickles_error;
+pub mod pickles_lowering;
+#[cfg(feature = "std")]
+pub mod pickles_parse;
+pub mod pickles_types;
+pub mod pickles_verify;
+
 pub type SpongeParams = PlonkSpongeConstantsKimchi;
 pub type BaseSponge = DefaultFqSponge<VestaParameters, SpongeParams, FULL_ROUNDS>;
 pub type ScalarSponge = DefaultFrSponge<Fp, SpongeParams, FULL_ROUNDS>;
@@ -96,3 +103,5 @@ pub fn verify_kimchi_proof<R: rand::RngCore + rand::CryptoRng>(
 mod parse;
 #[cfg(feature = "std")]
 pub use parse::*;
+#[cfg(feature = "std")]
+pub use pickles_parse::*;
