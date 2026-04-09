@@ -74,8 +74,8 @@ jobs:
       - run: make rust-unit-tests
 
   rust-e2e-test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    runs-on: large-runner-pu
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
