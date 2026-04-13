@@ -1,3 +1,10 @@
+//! CLI inspector for Mina-exported `Simple_chain` Pickles fixtures.
+//!
+//! The output is meant to answer three questions quickly:
+//! - can Rust parse the bundle and side-loaded proof at all?
+//! - what structured metadata is already available from the proof bytes?
+//! - how much of the wrap public-input vector can Rust derive today?
+
 use std::env;
 use std::fs;
 use std::process::ExitCode;
@@ -146,6 +153,7 @@ fn usage(program: &str) -> String {
     format!("usage: {program} <simple-chain-bundle.json> [output.json]")
 }
 
+/// Render a machine-readable view of the current Pickles support boundary.
 fn main() -> ExitCode {
     let mut args = env::args();
     let program = args.next().unwrap_or_else(|| "pickles_inspect".into());

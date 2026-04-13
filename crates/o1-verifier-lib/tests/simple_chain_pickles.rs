@@ -1,3 +1,10 @@
+//! Regression tests for the current Mina `Simple_chain` Pickles scaffold.
+//!
+//! These tests do not prove end-to-end Pickles verification yet. They lock:
+//! - bundle parsing
+//! - proof metadata decoding from real Mina fixtures
+//! - the current wrap public-input planning boundary
+
 #![cfg(feature = "std")]
 
 use o1_verifier_lib::{

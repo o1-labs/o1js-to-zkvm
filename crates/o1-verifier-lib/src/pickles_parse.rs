@@ -1,3 +1,10 @@
+//! Parsing helpers for the Mina `Simple_chain` exporter bundle.
+//!
+//! This module is intentionally narrow. It only knows how to:
+//! - read the JSON fixture bundle emitted by the Mina-side exporter
+//! - decode the side-loaded proof / verification key blobs
+//! - build the current `SimpleChainStatement` request shape
+
 use std::str::FromStr;
 
 use mina_curves::pasta::Fp;
@@ -48,6 +55,7 @@ fn decode_base64(field_name: &'static str, value: &str) -> Result<Vec<u8>, Pickl
     base64::decode(value).map_err(|_| PicklesError::InvalidBase64(field_name))
 }
 
+/// Parse a Mina-exported `Simple_chain` fixture bundle into typed Rust data.
 pub fn parse_simple_chain_bundle(bundle_json: &str) -> Result<SimpleChainFixtureBundle, PicklesError> {
     let raw: RawSimpleChainBundle = serde_json::from_str(bundle_json)
         .map_err(|err| PicklesError::InvalidJson(err.to_string()))?;
@@ -91,6 +99,7 @@ pub fn parse_simple_chain_bundle(bundle_json: &str) -> Result<SimpleChainFixture
     })
 }
 
+/// Parse the bundle and immediately extract one named fixture as a verifier request.
 pub fn parse_simple_chain_request(
     bundle_json: &str,
     fixture_name: &str,

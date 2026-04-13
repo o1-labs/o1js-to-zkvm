@@ -1,3 +1,13 @@
+//! Lowering and inspection logic for Mina side-loaded Pickles proofs.
+//!
+//! This module currently does three distinct jobs:
+//! - parse structured metadata from the Mina side-loaded proof text
+//! - expose the current missing lowering boundary explicitly
+//! - derive a partial wrap public-input plan from the decoded metadata
+//!
+//! It does not yet construct the final wrap `VerifierIndex`, raw Kimchi proof,
+//! or exact `Vec<Fp>` needed for end-to-end verification.
+
 extern crate alloc;
 
 use alloc::string::{String, ToString};
@@ -20,6 +30,10 @@ pub struct LoweredWrapInstance {
     pub public_input: Vec<Fp>,
 }
 
+/// Future lowering entry point from Mina side-loaded artifacts into raw Kimchi inputs.
+///
+/// The final goal of this function is to bridge:
+/// `PicklesVerifyRequest -> (VerifierIndex, ProverProof, public_input)`.
 pub fn lower_simple_chain_request(
     _request: &PicklesVerifyRequest,
 ) -> Result<LoweredWrapInstance, PicklesError> {
@@ -29,6 +43,8 @@ pub fn lower_simple_chain_request(
 }
 
 #[cfg(feature = "std")]
+/// Decode the structured proof metadata Rust can currently extract from a real
+/// Mina-exported `Simple_chain` side-loaded proof.
 pub fn lower_simple_chain_metadata(
     request: &PicklesVerifyRequest,
 ) -> Result<SideLoadedProofMetadata, PicklesError> {
@@ -36,6 +52,10 @@ pub fn lower_simple_chain_metadata(
 }
 
 #[cfg(feature = "std")]
+/// Build an ordered plan for the wrap public-input vector.
+///
+/// This is a planning artifact: it marks which slots are already derivable from
+/// the exported proof and which still require additional Mina/Kimchi preprocessing.
 pub fn lower_simple_chain_public_input_plan(
     request: &PicklesVerifyRequest,
 ) -> Result<WrapPublicInputPlan, PicklesError> {
