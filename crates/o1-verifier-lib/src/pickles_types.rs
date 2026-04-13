@@ -53,18 +53,41 @@ pub struct NamedSectionCount {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InnerProofMetadata {
-    pub w_comm_count: usize,
-    pub z_comm_count: usize,
-    pub t_comm_count: usize,
-    pub lookup_present: bool,
-    pub evaluation_sections: Vec<NamedSectionCount>,
-    pub ft_eval1: String,
-    pub lr_count: usize,
+pub struct CurvePointPairHex {
+    pub left: CurvePointHex,
+    pub right: CurvePointHex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedPointSectionHex {
+    pub name: String,
+    pub raw_payload_items: Vec<String>,
+    pub points: Vec<CurvePointHex>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrapProofCommitmentsHex {
+    pub w_comm: Vec<CurvePointHex>,
+    pub z_comm: Vec<CurvePointHex>,
+    pub t_comm: Vec<CurvePointHex>,
+    pub lookup: Option<Vec<CurvePointHex>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrapBulletproofHex {
+    pub lr_pairs: Vec<CurvePointPairHex>,
     pub z_1: String,
     pub z_2: String,
     pub delta: CurvePointHex,
     pub challenge_polynomial_commitment: CurvePointHex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrapProofBodyHex {
+    pub commitments: WrapProofCommitmentsHex,
+    pub evaluations: Vec<NamedPointSectionHex>,
+    pub ft_eval1: String,
+    pub bulletproof: WrapBulletproofHex,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,7 +104,7 @@ pub struct SideLoadedProofMetadata {
     pub prev_evals_public_input: Vec<String>,
     pub prev_evals_sections: Vec<NamedSectionCount>,
     pub ft_eval1: String,
-    pub inner_proof: InnerProofMetadata,
+    pub inner_proof: WrapProofBodyHex,
 }
 
 #[derive(Clone, Debug, PartialEq)]

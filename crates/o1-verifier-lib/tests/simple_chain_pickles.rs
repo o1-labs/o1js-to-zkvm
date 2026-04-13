@@ -63,17 +63,30 @@ fn test_lower_simple_chain_metadata() {
         "0x10AA42A4D9ABF87EC84D2C1B533BAB1A8DE7493077AC05D35A927FC7B0D3C2AE"
     );
     assert!(!lowered.prev_evals_sections.is_empty());
-    assert_eq!(lowered.inner_proof.w_comm_count, 15);
+    assert_eq!(lowered.inner_proof.commitments.w_comm.len(), 15);
+    assert_eq!(lowered.inner_proof.commitments.z_comm.len(), 1);
+    assert_eq!(lowered.inner_proof.commitments.t_comm.len(), 7);
+    assert!(lowered.inner_proof.commitments.lookup.is_none());
+    assert_eq!(lowered.inner_proof.evaluations.len(), 10);
+    assert_eq!(lowered.inner_proof.evaluations[0].name, "w");
+    assert_eq!(lowered.inner_proof.evaluations[0].points.len(), 15);
+    assert_eq!(lowered.inner_proof.evaluations[2].name, "z");
+    assert_eq!(lowered.inner_proof.evaluations[2].points.len(), 1);
     assert_eq!(
         lowered.inner_proof.ft_eval1,
         "0x28694F3753767EBE810BAA341397F715A1E45AD0111C3CD9E158F4907EDA8558"
     );
     assert_eq!(
-        lowered.inner_proof.z_1,
+        lowered.inner_proof.bulletproof.z_1,
         "0x1742B94B5E3D90C58AE270F32ED4C3FA96421DF9871970BA932CE563EA1683AB"
     );
+    assert_eq!(lowered.inner_proof.bulletproof.lr_pairs.len(), 15);
     assert_eq!(
-        lowered.inner_proof.challenge_polynomial_commitment.x,
+        lowered
+            .inner_proof
+            .bulletproof
+            .challenge_polynomial_commitment
+            .x,
         "0x34BE5355D36CCB119E1B2B4AC68BDB62257708551FF0D6EE57FB72E65B599DAD"
     );
 }

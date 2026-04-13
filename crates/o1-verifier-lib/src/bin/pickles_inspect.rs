@@ -86,13 +86,36 @@ struct NamedSectionCountOutput {
 
 #[derive(Serialize)]
 struct InnerProofOutput {
-    w_comm_count: usize,
-    z_comm_count: usize,
-    t_comm_count: usize,
-    lookup_present: bool,
-    evaluation_sections: Vec<NamedSectionCountOutput>,
+    commitments: CommitmentsOutput,
+    evaluations: Vec<NamedPointSectionOutput>,
     ft_eval1: String,
-    lr_count: usize,
+    bulletproof: BulletproofOutput,
+}
+
+#[derive(Serialize)]
+struct CommitmentsOutput {
+    w_comm: Vec<PointOutput>,
+    z_comm: Vec<PointOutput>,
+    t_comm: Vec<PointOutput>,
+    lookup: Option<Vec<PointOutput>>,
+}
+
+#[derive(Serialize)]
+struct NamedPointSectionOutput {
+    name: String,
+    raw_payload_items: Vec<String>,
+    points: Vec<PointOutput>,
+}
+
+#[derive(Serialize)]
+struct PointPairOutput {
+    left: PointOutput,
+    right: PointOutput,
+}
+
+#[derive(Serialize)]
+struct BulletproofOutput {
+    lr_pairs: Vec<PointPairOutput>,
     z_1: String,
     z_2: String,
     delta: PointOutput,
@@ -211,30 +234,100 @@ fn main() -> ExitCode {
                         .collect(),
                     ft_eval1: metadata.ft_eval1,
                     inner_proof: InnerProofOutput {
-                        w_comm_count: metadata.inner_proof.w_comm_count,
-                        z_comm_count: metadata.inner_proof.z_comm_count,
-                        t_comm_count: metadata.inner_proof.t_comm_count,
-                        lookup_present: metadata.inner_proof.lookup_present,
-                        evaluation_sections: metadata
+                        commitments: CommitmentsOutput {
+                            w_comm: metadata
+                                .inner_proof
+                                .commitments
+                                .w_comm
+                                .into_iter()
+                                .map(|point| PointOutput {
+                                    x: point.x,
+                                    y: point.y,
+                                })
+                                .collect(),
+                            z_comm: metadata
+                                .inner_proof
+                                .commitments
+                                .z_comm
+                                .into_iter()
+                                .map(|point| PointOutput {
+                                    x: point.x,
+                                    y: point.y,
+                                })
+                                .collect(),
+                            t_comm: metadata
+                                .inner_proof
+                                .commitments
+                                .t_comm
+                                .into_iter()
+                                .map(|point| PointOutput {
+                                    x: point.x,
+                                    y: point.y,
+                                })
+                                .collect(),
+                            lookup: metadata.inner_proof.commitments.lookup.map(|points| {
+                                points
+                                    .into_iter()
+                                    .map(|point| PointOutput {
+                                        x: point.x,
+                                        y: point.y,
+                                    })
+                                    .collect()
+                            }),
+                        },
+                        evaluations: metadata
                             .inner_proof
-                            .evaluation_sections
+                            .evaluations
                             .into_iter()
-                            .map(|section| NamedSectionCountOutput {
+                            .map(|section| NamedPointSectionOutput {
                                 name: section.name,
-                                count: section.count,
+                                raw_payload_items: section.raw_payload_items,
+                                points: section
+                                    .points
+                                    .into_iter()
+                                    .map(|point| PointOutput {
+                                        x: point.x,
+                                        y: point.y,
+                                    })
+                                    .collect(),
                             })
                             .collect(),
                         ft_eval1: metadata.inner_proof.ft_eval1,
-                        lr_count: metadata.inner_proof.lr_count,
-                        z_1: metadata.inner_proof.z_1,
-                        z_2: metadata.inner_proof.z_2,
-                        delta: PointOutput {
-                            x: metadata.inner_proof.delta.x,
-                            y: metadata.inner_proof.delta.y,
-                        },
-                        challenge_polynomial_commitment: PointOutput {
-                            x: metadata.inner_proof.challenge_polynomial_commitment.x,
-                            y: metadata.inner_proof.challenge_polynomial_commitment.y,
+                        bulletproof: BulletproofOutput {
+                            lr_pairs: metadata
+                                .inner_proof
+                                .bulletproof
+                                .lr_pairs
+                                .into_iter()
+                                .map(|pair| PointPairOutput {
+                                    left: PointOutput {
+                                        x: pair.left.x,
+                                        y: pair.left.y,
+                                    },
+                                    right: PointOutput {
+                                        x: pair.right.x,
+                                        y: pair.right.y,
+                                    },
+                                })
+                                .collect(),
+                            z_1: metadata.inner_proof.bulletproof.z_1,
+                            z_2: metadata.inner_proof.bulletproof.z_2,
+                            delta: PointOutput {
+                                x: metadata.inner_proof.bulletproof.delta.x,
+                                y: metadata.inner_proof.bulletproof.delta.y,
+                            },
+                            challenge_polynomial_commitment: PointOutput {
+                                x: metadata
+                                    .inner_proof
+                                    .bulletproof
+                                    .challenge_polynomial_commitment
+                                    .x,
+                                y: metadata
+                                    .inner_proof
+                                    .bulletproof
+                                    .challenge_polynomial_commitment
+                                    .y,
+                            },
                         },
                     },
                 })

@@ -7,8 +7,9 @@ use mina_curves::pasta::Fp;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
-    BulletproofChallengeHex, CurvePointHex, InnerProofMetadata, NamedSectionCount,
-    PicklesVerifyRequest, PlonkDeferredValuesHex, PlonkFeatureFlags, SideLoadedProofMetadata,
+    BulletproofChallengeHex, CurvePointHex, CurvePointPairHex, NamedPointSectionHex,
+    NamedSectionCount, PicklesVerifyRequest, PlonkDeferredValuesHex, PlonkFeatureFlags,
+    SideLoadedProofMetadata, WrapBulletproofHex, WrapProofBodyHex, WrapProofCommitmentsHex,
 };
 use crate::{VestaProof, VestaVerifierIndex};
 
@@ -579,25 +580,110 @@ fn parse_named_section_counts(entries: &[sexp::Sexp]) -> Result<Vec<NamedSection
 }
 
 #[cfg(feature = "std")]
-fn parse_inner_proof(entries: &[sexp::Sexp]) -> Result<InnerProofMetadata, PicklesError> {
+fn parse_inner_proof(entries: &[sexp::Sexp]) -> Result<WrapProofBodyHex, PicklesError> {
     let commitments = group_entries(entries, "commitments")?;
     let evaluations = group_entries(entries, "evaluations")?;
     let bulletproof = group_entries(entries, "bulletproof")?;
 
-    Ok(InnerProofMetadata {
-        w_comm_count: parse_point_vector(binding_rest(commitments, "w_comm")?)?.len(),
-        z_comm_count: parse_point_vector(binding_rest(commitments, "z_comm")?)?.len(),
-        t_comm_count: parse_point_vector(binding_rest(commitments, "t_comm")?)?.len(),
-        lookup_present: binding_optional_rest(commitments, "lookup").is_some(),
-        evaluation_sections: parse_named_section_counts(evaluations)?,
+    Ok(WrapProofBodyHex {
+        commitments: WrapProofCommitmentsHex {
+            w_comm: parse_point_vector(binding_rest(commitments, "w_comm")?)?,
+            z_comm: parse_point_vector(binding_rest(commitments, "z_comm")?)?,
+            t_comm: parse_point_vector(binding_rest(commitments, "t_comm")?)?,
+            lookup: binding_optional_rest(commitments, "lookup")
+                .map(parse_point_vector)
+                .transpose()?,
+        },
+        evaluations: parse_named_point_sections(evaluations)?,
         ft_eval1: atom_owned(binding_one(entries, "ft_eval1")?)?,
-        lr_count: binding_rest(bulletproof, "lr")?.len(),
-        z_1: atom_owned(binding_one(bulletproof, "z_1")?)?,
-        z_2: atom_owned(binding_one(bulletproof, "z_2")?)?,
-        delta: parse_point(binding_one(bulletproof, "delta")?)?,
-        challenge_polynomial_commitment: parse_point(binding_one(
-            bulletproof,
-            "challenge_polynomial_commitment",
-        )?)?,
+        bulletproof: WrapBulletproofHex {
+            lr_pairs: parse_point_pair_vector(binding_rest(bulletproof, "lr")?)?,
+            z_1: atom_owned(binding_one(bulletproof, "z_1")?)?,
+            z_2: atom_owned(binding_one(bulletproof, "z_2")?)?,
+            delta: parse_point(binding_one(bulletproof, "delta")?)?,
+            challenge_polynomial_commitment: parse_point(binding_one(
+                bulletproof,
+                "challenge_polynomial_commitment",
+            )?)?,
+        },
     })
+}
+
+#[cfg(feature = "std")]
+fn parse_point_pair(sexp: &sexp::Sexp) -> Result<CurvePointPairHex, PicklesError> {
+    let items = list_items(sexp)?;
+    if items.len() != 2 {
+        return Err(PicklesError::InvalidSexp(format!(
+            "expected curve-point pair with 2 entries, got {}",
+            items.len()
+        )));
+    }
+
+    Ok(CurvePointPairHex {
+        left: parse_point(&items[0])?,
+        right: parse_point(&items[1])?,
+    })
+}
+
+#[cfg(feature = "std")]
+fn parse_point_pair_vector(items: &[sexp::Sexp]) -> Result<Vec<CurvePointPairHex>, PicklesError> {
+    let items = if items.len() == 1 {
+        match peel_singletons(&items[0]) {
+            sexp::Sexp::List(inner) if inner.iter().all(|item| parse_point_pair(item).is_ok()) => inner,
+            _ => items,
+        }
+    } else {
+        items
+    };
+
+    items.iter().map(parse_point_pair).collect()
+}
+
+#[cfg(feature = "std")]
+fn parse_named_point_sections(entries: &[sexp::Sexp]) -> Result<Vec<NamedPointSectionHex>, PicklesError> {
+    entries
+        .iter()
+        .map(parse_named_point_section)
+        .collect()
+}
+
+#[cfg(feature = "std")]
+fn parse_named_point_section(entry: &sexp::Sexp) -> Result<NamedPointSectionHex, PicklesError> {
+    let items = list_items(entry)?;
+    if items.is_empty() {
+        return Err(PicklesError::InvalidSexp(
+            "expected named point section entry".to_string(),
+        ));
+    }
+
+    let name = atom_owned(&items[0])?;
+    let raw_payload_items = items[1..].iter().map(|item| item.to_string()).collect();
+    let points = parse_section_points(&items[1..])?;
+
+    Ok(NamedPointSectionHex {
+        name,
+        raw_payload_items,
+        points,
+    })
+}
+
+#[cfg(feature = "std")]
+fn parse_section_points(items: &[sexp::Sexp]) -> Result<Vec<CurvePointHex>, PicklesError> {
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if let Ok(points) = parse_point_vector(items) {
+        return Ok(points);
+    }
+
+    if items.len() == 1 {
+        if let Ok(inner) = list_items(&items[0]) {
+            if let Ok(points) = parse_point_vector(inner) {
+                return Ok(points);
+            }
+        }
+    }
+
+    Ok(Vec::new())
 }
