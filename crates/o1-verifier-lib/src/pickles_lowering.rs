@@ -10,6 +10,7 @@ use crate::pickles_types::{
     BulletproofChallengeHex, CurvePointHex, CurvePointPairHex, NamedPointSectionHex,
     NamedSectionCount, PicklesVerifyRequest, PlonkDeferredValuesHex, PlonkFeatureFlags,
     SideLoadedProofMetadata, WrapBulletproofHex, WrapProofBodyHex, WrapProofCommitmentsHex,
+    WrapPublicInputFieldPlan, WrapPublicInputPlan,
 };
 use crate::{VestaProof, VestaVerifierIndex};
 
@@ -32,6 +33,125 @@ pub fn lower_simple_chain_metadata(
     request: &PicklesVerifyRequest,
 ) -> Result<SideLoadedProofMetadata, PicklesError> {
     decode_side_loaded_proof_metadata(&request.proof.0)
+}
+
+#[cfg(feature = "std")]
+pub fn lower_simple_chain_public_input_plan(
+    request: &PicklesVerifyRequest,
+) -> Result<WrapPublicInputPlan, PicklesError> {
+    let metadata = lower_simple_chain_metadata(request)?;
+    build_wrap_public_input_plan(&metadata)
+}
+
+#[cfg(feature = "std")]
+fn build_wrap_public_input_plan(
+    metadata: &SideLoadedProofMetadata,
+) -> Result<WrapPublicInputPlan, PicklesError> {
+    let deferred_bulletproof_len = metadata.deferred_bulletproof_challenges.len();
+    let mut fields = Vec::with_capacity(14 + deferred_bulletproof_len);
+
+    fields.push(missing_field(
+        0,
+        "combined_inner_product",
+        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+    ));
+    fields.push(missing_field(
+        1,
+        "b",
+        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+    ));
+    fields.push(missing_field(
+        2,
+        "zeta_to_srs_length",
+        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+    ));
+    fields.push(missing_field(
+        3,
+        "zeta_to_domain_size",
+        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+    ));
+    fields.push(missing_field(
+        4,
+        "perm",
+        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+    ));
+    fields.push(known_field(
+        5,
+        "beta",
+        pack_hex64_limbs_to_field_hex(&metadata.plonk.beta)?,
+        "deferred_values.plonk.beta packed with Mina Challenge.typ",
+    ));
+    fields.push(known_field(
+        6,
+        "gamma",
+        pack_hex64_limbs_to_field_hex(&metadata.plonk.gamma)?,
+        "deferred_values.plonk.gamma packed with Mina Challenge.typ",
+    ));
+    fields.push(known_field(
+        7,
+        "alpha",
+        pack_hex64_limbs_to_field_hex(&metadata.plonk.alpha_inner)?,
+        "deferred_values.plonk.alpha packed with Mina Challenge.typ via scalar_challenge",
+    ));
+    fields.push(known_field(
+        8,
+        "zeta",
+        pack_hex64_limbs_to_field_hex(&metadata.plonk.zeta_inner)?,
+        "deferred_values.plonk.zeta packed with Mina Challenge.typ via scalar_challenge",
+    ));
+    fields.push(missing_field(
+        9,
+        "xi",
+        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+    ));
+    fields.push(known_field(
+        10,
+        "sponge_digest_before_evaluations",
+        pack_hex64_limbs_to_field_hex(&metadata.sponge_digest_before_evaluations)?,
+        "proof_state.sponge_digest_before_evaluations packed with Mina Digest.typ",
+    ));
+    fields.push(missing_field(
+        11,
+        "messages_for_next_wrap_proof",
+        "requires Mina Wrap_hack hash over prepared next-wrap messages",
+    ));
+    fields.push(missing_field(
+        12,
+        "messages_for_next_step_proof",
+        "requires Mina hash over prepared next-step messages",
+    ));
+
+    for (offset, challenge) in metadata.deferred_bulletproof_challenges.iter().enumerate() {
+        fields.push(known_field(
+            13 + offset,
+            &format!("bulletproof_challenges[{offset}]"),
+            pack_hex64_limbs_to_field_hex(&challenge.prechallenge_inner)?,
+            "deferred_values.bulletproof_challenges packed with Mina Bulletproof_challenge.wrap_typ",
+        ));
+    }
+
+    let branch_index = 13 + deferred_bulletproof_len;
+    fields.push(known_field(
+        branch_index,
+        "branch_data",
+        field_to_hex(pack_branch_data(metadata.proofs_verified, metadata.domain_log2)?),
+        "branch_data packed as 4 * domain_log2 + prefix-mask(proofs_verified)",
+    ));
+    fields.push(known_field(
+        branch_index + 1,
+        "joint_combiner",
+        pack_optional_joint_combiner(&metadata.plonk.joint_combiner_inner)?,
+        "lookup opt slot uses a constant-layout zero scalar challenge when lookups are disabled",
+    ));
+
+    Ok(WrapPublicInputPlan {
+        total_fields: fields.len(),
+        exact_public_input_available: fields.iter().all(|field| field.value_hex.is_some()),
+        elided_constant_segments: vec![
+            "feature_flags: all disabled, so Mina packs them as zero-field constants".into(),
+        ],
+        fields,
+    })
 }
 
 #[cfg(feature = "std")]
@@ -686,4 +806,93 @@ fn parse_section_points(items: &[sexp::Sexp]) -> Result<Vec<CurvePointHex>, Pick
     }
 
     Ok(Vec::new())
+}
+
+#[cfg(feature = "std")]
+fn missing_field(index: usize, name: &str, source: &str) -> WrapPublicInputFieldPlan {
+    WrapPublicInputFieldPlan {
+        index,
+        name: name.into(),
+        value_hex: None,
+        source: source.into(),
+    }
+}
+
+#[cfg(feature = "std")]
+fn known_field(index: usize, name: &str, value_hex: String, source: &str) -> WrapPublicInputFieldPlan {
+    WrapPublicInputFieldPlan {
+        index,
+        name: name.into(),
+        value_hex: Some(value_hex),
+        source: source.into(),
+    }
+}
+
+#[cfg(feature = "std")]
+fn pack_hex64_limbs_to_field_hex(limbs: &[String]) -> Result<String, PicklesError> {
+    let field = pack_hex64_limbs_to_field(limbs)?;
+    Ok(field_to_hex(field))
+}
+
+#[cfg(feature = "std")]
+fn pack_hex64_limbs_to_field(limbs: &[String]) -> Result<Fp, PicklesError> {
+    use ark_ff::PrimeField;
+
+    let mut bytes = Vec::with_capacity(limbs.len() * 8);
+    for limb in limbs {
+        let limb = parse_hex64_limb(limb)?;
+        bytes.extend_from_slice(&limb.to_le_bytes());
+    }
+
+    Ok(Fp::from_le_bytes_mod_order(&bytes))
+}
+
+#[cfg(feature = "std")]
+fn parse_hex64_limb(limb: &str) -> Result<u64, PicklesError> {
+    u64::from_str_radix(limb, 16)
+        .map_err(|_| PicklesError::InvalidFieldElement(format!("invalid Hex64 limb: {limb}")))
+}
+
+#[cfg(feature = "std")]
+fn pack_branch_data(proofs_verified: u8, domain_log2: u8) -> Result<Fp, PicklesError> {
+    let proofs_verified_mask = match proofs_verified {
+        0 => 0u64,
+        1 => 2u64,
+        2 => 3u64,
+        other => {
+            return Err(PicklesError::InvalidSexp(format!(
+                "unsupported proofs_verified value for branch_data packing: {other}"
+            )))
+        }
+    };
+
+    Ok(Fp::from(4u64 * u64::from(domain_log2) + proofs_verified_mask))
+}
+
+#[cfg(feature = "std")]
+fn pack_optional_joint_combiner(joint_combiner_inner: &Option<Vec<String>>) -> Result<String, PicklesError> {
+    match joint_combiner_inner {
+        Some(limbs) => pack_hex64_limbs_to_field_hex(limbs),
+        None => Ok(field_to_hex(Fp::from(0u64))),
+    }
+}
+
+#[cfg(feature = "std")]
+fn field_to_hex(field: Fp) -> String {
+    use ark_ff::{BigInteger, PrimeField};
+
+    let bytes = field.into_bigint().to_bytes_be();
+    if bytes.iter().all(|byte| *byte == 0) {
+        return "0x0".into();
+    }
+    let first_non_zero = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .expect("non-zero byte present");
+    let trimmed = &bytes[first_non_zero..];
+    let mut out = String::from("0x");
+    for byte in trimmed {
+        out.push_str(&format!("{byte:02X}"));
+    }
+    out
 }

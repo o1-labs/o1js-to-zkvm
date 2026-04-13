@@ -3,7 +3,8 @@ use std::fs;
 use std::process::ExitCode;
 
 use o1_verifier_lib::{
-    lower_simple_chain_metadata, lower_simple_chain_request, parse_simple_chain_bundle,
+    lower_simple_chain_metadata, lower_simple_chain_public_input_plan, lower_simple_chain_request,
+    parse_simple_chain_bundle,
 };
 use serde::Serialize;
 
@@ -23,6 +24,9 @@ struct FixtureOutput {
     metadata_status: &'static str,
     metadata: Option<FixtureMetadataOutput>,
     metadata_error: Option<String>,
+    public_input_plan_status: &'static str,
+    public_input_plan: Option<PublicInputPlanOutput>,
+    public_input_plan_error: Option<String>,
     verification_status: &'static str,
     verification: Option<bool>,
     verification_error: Option<String>,
@@ -120,6 +124,22 @@ struct BulletproofOutput {
     z_2: String,
     delta: PointOutput,
     challenge_polynomial_commitment: PointOutput,
+}
+
+#[derive(Serialize)]
+struct PublicInputPlanOutput {
+    total_fields: usize,
+    exact_public_input_available: bool,
+    elided_constant_segments: Vec<String>,
+    fields: Vec<PublicInputFieldOutput>,
+}
+
+#[derive(Serialize)]
+struct PublicInputFieldOutput {
+    index: usize,
+    name: String,
+    value_hex: Option<String>,
+    source: String,
 }
 
 fn usage(program: &str) -> String {
@@ -336,9 +356,34 @@ fn main() -> ExitCode {
             let verification = lower_simple_chain_request(&request)
                 .map(|_| true)
                 .map_err(|err| err.to_string());
+            let public_input_plan = lower_simple_chain_public_input_plan(&request)
+                .map(|plan| PublicInputPlanOutput {
+                    total_fields: plan.total_fields,
+                    exact_public_input_available: plan.exact_public_input_available,
+                    elided_constant_segments: plan.elided_constant_segments,
+                    fields: plan
+                        .fields
+                        .into_iter()
+                        .map(|field| PublicInputFieldOutput {
+                            index: field.index,
+                            name: field.name,
+                            value_hex: field.value_hex,
+                            source: field.source,
+                        })
+                        .collect(),
+                })
+                .map_err(|err| err.to_string());
 
             let (metadata_status, metadata, metadata_error) = match metadata {
                 Ok(metadata) => ("decoded", Some(metadata), None),
+                Err(err) => ("error", None, Some(err)),
+            };
+            let (
+                public_input_plan_status,
+                public_input_plan,
+                public_input_plan_error,
+            ) = match public_input_plan {
+                Ok(plan) => ("decoded", Some(plan), None),
                 Err(err) => ("error", None, Some(err)),
             };
 
@@ -359,6 +404,9 @@ fn main() -> ExitCode {
                 metadata_status,
                 metadata,
                 metadata_error,
+                public_input_plan_status,
+                public_input_plan,
+                public_input_plan_error,
                 verification_status,
                 verification,
                 verification_error,

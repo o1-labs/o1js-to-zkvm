@@ -107,6 +107,22 @@ pub struct SideLoadedProofMetadata {
     pub inner_proof: WrapProofBodyHex,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrapPublicInputFieldPlan {
+    pub index: usize,
+    pub name: String,
+    pub value_hex: Option<String>,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrapPublicInputPlan {
+    pub total_fields: usize,
+    pub exact_public_input_available: bool,
+    pub elided_constant_segments: Vec<String>,
+    pub fields: Vec<WrapPublicInputFieldPlan>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SimpleChainStatement {
     pub value: Fp,

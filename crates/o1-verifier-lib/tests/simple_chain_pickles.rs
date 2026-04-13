@@ -1,6 +1,8 @@
 #![cfg(feature = "std")]
 
-use o1_verifier_lib::{lower_simple_chain_metadata, parse_simple_chain_bundle};
+use o1_verifier_lib::{
+    lower_simple_chain_metadata, lower_simple_chain_public_input_plan, parse_simple_chain_bundle,
+};
 
 const SIMPLE_CHAIN_BUNDLE_JSON: &str = include_str!("../../../fixtures/simple_chain_bundle.json");
 const REAL_SIMPLE_CHAIN_BUNDLE_JSON: &str =
@@ -89,4 +91,54 @@ fn test_lower_simple_chain_metadata() {
             .x,
         "0x34BE5355D36CCB119E1B2B4AC68BDB62257708551FF0D6EE57FB72E65B599DAD"
     );
+}
+
+#[test]
+fn test_lower_simple_chain_public_input_plan() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+
+    let plan = lower_simple_chain_public_input_plan(&request).expect("public-input plan");
+
+    assert_eq!(plan.total_fields, 31);
+    assert!(!plan.exact_public_input_available);
+    assert_eq!(plan.fields.len(), 31);
+    assert_eq!(plan.fields[0].name, "combined_inner_product");
+    assert_eq!(plan.fields[0].value_hex, None);
+    assert_eq!(plan.fields[5].name, "beta");
+    assert_eq!(plan.fields[5].value_hex.as_deref(), Some("0x61C695095C3215A71A53517E5ED64C42"));
+    assert_eq!(plan.fields[6].name, "gamma");
+    assert_eq!(plan.fields[6].value_hex.as_deref(), Some("0xD0107795EF949526488602478FDA390A"));
+    assert_eq!(plan.fields[7].name, "alpha");
+    assert_eq!(plan.fields[7].value_hex.as_deref(), Some("0x54635D608720548CA72BD6DB3FCB6313"));
+    assert_eq!(plan.fields[8].name, "zeta");
+    assert_eq!(plan.fields[8].value_hex.as_deref(), Some("0xDD5DC4D8C688A1BD2AE9FAE5D2CBF4A6"));
+    assert_eq!(plan.fields[9].name, "xi");
+    assert_eq!(plan.fields[9].value_hex, None);
+    assert_eq!(plan.fields[10].name, "sponge_digest_before_evaluations");
+    assert_eq!(
+        plan.fields[10].value_hex.as_deref(),
+        Some("0x211BAB24893562D458BF562A7203FAD70E531A2F4DE06BA47124D1067385677E")
+    );
+    assert_eq!(plan.fields[11].name, "messages_for_next_wrap_proof");
+    assert_eq!(plan.fields[11].value_hex, None);
+    assert_eq!(plan.fields[12].name, "messages_for_next_step_proof");
+    assert_eq!(plan.fields[12].value_hex, None);
+    assert_eq!(plan.fields[13].name, "bulletproof_challenges[0]");
+    assert_eq!(
+        plan.fields[13].value_hex.as_deref(),
+        Some("0xEDB28D7CF4AE20A749D5859EE2EC9E84")
+    );
+    assert_eq!(plan.fields[28].name, "bulletproof_challenges[15]");
+    assert_eq!(
+        plan.fields[28].value_hex.as_deref(),
+        Some("0xA76229A9A0BFB8A61B65D85E5CB3B4A4")
+    );
+    assert_eq!(plan.fields[29].name, "branch_data");
+    assert_eq!(plan.fields[29].value_hex.as_deref(), Some("0x32"));
+    assert_eq!(plan.fields[30].name, "joint_combiner");
+    assert_eq!(plan.fields[30].value_hex.as_deref(), Some("0x0"));
 }
