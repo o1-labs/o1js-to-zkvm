@@ -102,6 +102,24 @@ fn test_lower_simple_chain_metadata() {
 }
 
 #[test]
+fn test_lower_simple_chain_base_case_metadata() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("base_case")
+        .expect("base_case fixture request");
+
+    let lowered = lower_simple_chain_metadata(&request).expect("base_case metadata should decode");
+
+    assert_eq!(lowered.proofs_verified, 1);
+    assert_eq!(lowered.domain_log2, 14);
+    assert_eq!(lowered.deferred_bulletproof_challenges.len(), 16);
+    assert_eq!(lowered.inner_proof.commitments.w_comm.len(), 15);
+    assert_eq!(lowered.inner_proof.commitments.t_comm.len(), 7);
+    assert_eq!(lowered.inner_proof.bulletproof.lr_pairs.len(), 15);
+}
+
+#[test]
 fn test_lower_simple_chain_public_input_plan() {
     let bundle =
         parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -209,6 +227,29 @@ fn test_lower_simple_chain_raw_wrap_artifacts() {
 
     let lowered =
         lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_eq!(lowered.public_input.len(), 40);
+    assert_eq!(lowered.verifier_index.domain.log_size_of_group, 14);
+    assert_eq!(lowered.verifier_index.public, 40);
+    assert_eq!(lowered.verifier_index.prev_challenges, 2);
+    assert_eq!(lowered.proof.commitments.w_comm.len(), 15);
+    assert_eq!(lowered.proof.commitments.t_comm.len(), 7);
+    assert_eq!(lowered.proof.proof.lr.len(), 15);
+}
+
+#[test]
+fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    assert!(bundle.exported_raw_wrap_verifier.is_some());
+
+    let request = bundle
+        .request_for_fixture("base_case")
+        .expect("base_case fixture request");
+    assert!(request.exported_raw_wrap_proof.is_some());
+
+    let lowered = lower_simple_chain_raw_wrap_artifacts(&request)
+        .expect("base_case raw wrap artifacts should parse");
 
     assert_eq!(lowered.public_input.len(), 40);
     assert_eq!(lowered.verifier_index.domain.log_size_of_group, 14);
