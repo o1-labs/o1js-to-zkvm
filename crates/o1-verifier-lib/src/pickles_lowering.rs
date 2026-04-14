@@ -16,12 +16,22 @@ use alloc::vec::Vec;
 use ark_ff::{Field, PrimeField};
 use kimchi::circuits::domains::EvaluationDomains;
 use kimchi::curve::KimchiCurve;
+#[cfg(feature = "std")]
+use kimchi::linearization::expr_linearization;
 use kimchi::plonk_sponge::FrSponge;
+#[cfg(feature = "std")]
+use kimchi::proof::{PointEvaluations, ProofEvaluations, ProverCommitments};
 use mina_curves::pasta::{Fp, Fq, Pallas};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::{fp_kimchi, fq_kimchi, FULL_ROUNDS};
 use mina_poseidon::poseidon::{ArithmeticSponge, Sponge};
 use mina_poseidon::sponge::ScalarChallenge;
+#[cfg(feature = "std")]
+use poly_commitment::commitment::PolyComm;
+#[cfg(feature = "std")]
+use poly_commitment::ipa::OpeningProof;
+#[cfg(feature = "std")]
+use serde::Deserialize;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
@@ -33,6 +43,12 @@ use crate::pickles_types::{
 use crate::{ScalarSponge, Vesta, VestaProof, VestaVerifierIndex};
 
 pub struct LoweredWrapInstance {
+    pub verifier_index: VestaVerifierIndex,
+    pub proof: VestaProof,
+    pub public_input: Vec<Fp>,
+}
+
+pub struct LoweredRawWrapArtifacts {
     pub verifier_index: VestaVerifierIndex,
     pub proof: VestaProof,
     pub public_input: Vec<Fp>,
@@ -69,6 +85,648 @@ pub fn lower_simple_chain_public_input_plan(
 ) -> Result<WrapPublicInputPlan, PicklesError> {
     let metadata = lower_simple_chain_metadata(request)?;
     build_wrap_public_input_plan(request, &metadata)
+}
+
+#[cfg(feature = "std")]
+/// Deserialize the raw wrap verifier/proof JSON artifacts exported by Mina into
+/// the Rust Kimchi types already used by the low-level verifier.
+///
+/// This does not complete end-to-end verification yet because the exported wrap
+/// verifier index still omits the SRS. The returned verifier index therefore
+/// still needs its `srs`, `endo`, and linearization data reconstructed before it
+/// can be passed to `verify_kimchi_proof`.
+pub fn lower_simple_chain_raw_wrap_artifacts(
+    request: &PicklesVerifyRequest,
+) -> Result<LoweredRawWrapArtifacts, PicklesError> {
+    let raw_wrap_verifier = request.exported_raw_wrap_verifier.as_ref().ok_or_else(|| {
+        PicklesError::InvalidJson("missing raw_wrap_verification_key_json".into())
+    })?;
+    let raw_wrap_proof = request
+        .exported_raw_wrap_proof
+        .as_ref()
+        .ok_or_else(|| PicklesError::InvalidJson("missing raw_wrap_proof_json".into()))?;
+    let public_input = request
+        .exported_wrap_public_input
+        .as_ref()
+        .ok_or_else(|| PicklesError::InvalidJson("missing wrap_public_input_fields".into()))?
+        .fields
+        .clone();
+
+    let verifier_index = parse_raw_wrap_verifier_index(&raw_wrap_verifier.verifier_index_json)?;
+    let proof = parse_raw_wrap_proof(&raw_wrap_proof.proof_json)?;
+
+    Ok(LoweredRawWrapArtifacts {
+        verifier_index,
+        proof,
+        public_input,
+    })
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawWrapVerifierIndexJson {
+    domain: RawWrapDomainJson,
+    max_poly_size: usize,
+    public: usize,
+    prev_challenges: usize,
+    evals: RawWrapVerificationEvalsJson,
+    shifts: Vec<String>,
+    lookup_index: Option<serde_json::Value>,
+    zk_rows: u64,
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawWrapDomainJson {
+    log_size_of_group: usize,
+    group_gen: String,
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawWrapVerificationEvalsJson {
+    sigma_comm: Vec<RawWrapPolyCommJson>,
+    coefficients_comm: Vec<RawWrapPolyCommJson>,
+    generic_comm: RawWrapPolyCommJson,
+    psm_comm: RawWrapPolyCommJson,
+    complete_add_comm: RawWrapPolyCommJson,
+    mul_comm: RawWrapPolyCommJson,
+    emul_comm: RawWrapPolyCommJson,
+    endomul_scalar_comm: RawWrapPolyCommJson,
+    xor_comm: Option<RawWrapPolyCommJson>,
+    range_check0_comm: Option<RawWrapPolyCommJson>,
+    range_check1_comm: Option<RawWrapPolyCommJson>,
+    foreign_field_add_comm: Option<RawWrapPolyCommJson>,
+    foreign_field_mul_comm: Option<RawWrapPolyCommJson>,
+    rot_comm: Option<RawWrapPolyCommJson>,
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawWrapPolyCommJson {
+    unshifted: Vec<RawWrapPointJson>,
+    #[allow(dead_code)]
+    shifted: Option<serde_json::Value>,
+}
+
+#[cfg(feature = "std")]
+#[derive(Clone)]
+struct RawWrapPointJson {
+    x: String,
+    y: String,
+}
+
+#[cfg(feature = "std")]
+impl<'de> Deserialize<'de> for RawWrapPointJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Array(mut outer) if outer.len() == 2 => {
+                let tag = outer.remove(0);
+                let payload = outer.remove(0);
+                if tag != serde_json::Value::String("Finite".into()) {
+                    return Err(serde::de::Error::custom(
+                        "expected Finite point in raw wrap poly commitment",
+                    ));
+                }
+                match payload {
+                    serde_json::Value::Array(coords) if coords.len() == 2 => {
+                        let x = coords[0]
+                            .as_str()
+                            .ok_or_else(|| serde::de::Error::custom("invalid x coordinate"))?
+                            .to_string();
+                        let y = coords[1]
+                            .as_str()
+                            .ok_or_else(|| serde::de::Error::custom("invalid y coordinate"))?
+                            .to_string();
+                        Ok(Self { x, y })
+                    }
+                    _ => Err(serde::de::Error::custom(
+                        "expected [x, y] payload for Finite point",
+                    )),
+                }
+            }
+            _ => Err(serde::de::Error::custom(
+                "expected [\"Finite\", [x, y]] raw point encoding",
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+fn parse_raw_wrap_verifier_index(json: &str) -> Result<VestaVerifierIndex, PicklesError> {
+    let raw: RawWrapVerifierIndexJson = serde_json::from_str(json)
+        .map_err(|err| PicklesError::InvalidJson(format!("raw wrap verifier index: {err}")))?;
+
+    if raw.lookup_index.is_some() {
+        return Err(PicklesError::LoweringNotImplemented(
+            "lookup-enabled raw wrap verifier indexes are not supported yet",
+        ));
+    }
+
+    let parsed_group_gen = parse_hex_field(&raw.domain.group_gen)?;
+    let size = 1u64 << raw.domain.log_size_of_group;
+    let size_as_field_element = Fp::from(size);
+    let size_inv = size_as_field_element.inverse().ok_or_else(|| {
+        PicklesError::InvalidJson("raw wrap domain size is not invertible".into())
+    })?;
+    let group_gen_inv = parsed_group_gen.inverse().ok_or_else(|| {
+        PicklesError::InvalidJson("raw wrap domain group_gen is not invertible".into())
+    })?;
+    let domain = ark_poly::domain::Radix2EvaluationDomain::<Fp> {
+        size,
+        log_size_of_group: raw.domain.log_size_of_group as u32,
+        size_as_field_element,
+        size_inv,
+        group_gen: parsed_group_gen,
+        group_gen_inv,
+        offset: Fp::from(1u64),
+        offset_inv: Fp::from(1u64),
+        offset_pow_size: Fp::from(1u64),
+    };
+
+    let sigma_comm = raw
+        .evals
+        .sigma_comm
+        .into_iter()
+        .map(parse_raw_wrap_poly_comm)
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .map_err(|_| PicklesError::InvalidJson("raw wrap sigma_comm length mismatch".into()))?;
+    let coefficients_comm = raw
+        .evals
+        .coefficients_comm
+        .into_iter()
+        .map(parse_raw_wrap_poly_comm)
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .map_err(|_| {
+            PicklesError::InvalidJson("raw wrap coefficients_comm length mismatch".into())
+        })?;
+    let shift = raw
+        .shifts
+        .iter()
+        .map(|field| parse_hex_field(field))
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .map_err(|_| PicklesError::InvalidJson("raw wrap shifts length mismatch".into()))?;
+
+    let range_check0_comm = raw
+        .evals
+        .range_check0_comm
+        .map(parse_raw_wrap_poly_comm)
+        .transpose()?;
+    let range_check1_comm = raw
+        .evals
+        .range_check1_comm
+        .map(parse_raw_wrap_poly_comm)
+        .transpose()?;
+    let foreign_field_add_comm = raw
+        .evals
+        .foreign_field_add_comm
+        .map(parse_raw_wrap_poly_comm)
+        .transpose()?;
+    let foreign_field_mul_comm = raw
+        .evals
+        .foreign_field_mul_comm
+        .map(parse_raw_wrap_poly_comm)
+        .transpose()?;
+    let xor_comm = raw
+        .evals
+        .xor_comm
+        .map(parse_raw_wrap_poly_comm)
+        .transpose()?;
+    let rot_comm = raw
+        .evals
+        .rot_comm
+        .map(parse_raw_wrap_poly_comm)
+        .transpose()?;
+
+    let feature_flags = kimchi::circuits::constraints::FeatureFlags {
+        range_check0: range_check0_comm.is_some(),
+        range_check1: range_check1_comm.is_some(),
+        foreign_field_add: foreign_field_add_comm.is_some(),
+        foreign_field_mul: foreign_field_mul_comm.is_some(),
+        xor: xor_comm.is_some(),
+        rot: rot_comm.is_some(),
+        lookup_features: Default::default(),
+    };
+    let (linearization, powers_of_alpha) = expr_linearization::<Fp>(Some(&feature_flags), true);
+    let (_, endo) = Vesta::endos();
+
+    Ok(VestaVerifierIndex {
+        domain,
+        max_poly_size: raw.max_poly_size,
+        zk_rows: raw.zk_rows,
+        srs: alloc::sync::Arc::new(Default::default()),
+        public: raw.public,
+        prev_challenges: raw.prev_challenges,
+        sigma_comm,
+        coefficients_comm,
+        generic_comm: parse_raw_wrap_poly_comm(raw.evals.generic_comm)?,
+        psm_comm: parse_raw_wrap_poly_comm(raw.evals.psm_comm)?,
+        complete_add_comm: parse_raw_wrap_poly_comm(raw.evals.complete_add_comm)?,
+        mul_comm: parse_raw_wrap_poly_comm(raw.evals.mul_comm)?,
+        emul_comm: parse_raw_wrap_poly_comm(raw.evals.emul_comm)?,
+        endomul_scalar_comm: parse_raw_wrap_poly_comm(raw.evals.endomul_scalar_comm)?,
+        range_check0_comm,
+        range_check1_comm,
+        foreign_field_add_comm,
+        foreign_field_mul_comm,
+        xor_comm,
+        rot_comm,
+        shift,
+        permutation_vanishing_polynomial_m: Default::default(),
+        w: Default::default(),
+        endo: *endo,
+        lookup_index: None,
+        linearization,
+        powers_of_alpha,
+    })
+}
+
+#[cfg(feature = "std")]
+fn parse_raw_wrap_poly_comm(raw: RawWrapPolyCommJson) -> Result<PolyComm<Vesta>, PicklesError> {
+    Ok(PolyComm::new(
+        raw.unshifted
+            .into_iter()
+            .map(parse_raw_wrap_point)
+            .collect::<Result<Vec<_>, _>>()?,
+    ))
+}
+
+#[cfg(feature = "std")]
+fn parse_raw_wrap_point(raw: RawWrapPointJson) -> Result<Vesta, PicklesError> {
+    let x = parse_hex_field_fq(&raw.x)?;
+    let y = parse_hex_field_fq(&raw.y)?;
+    Ok(Vesta::new_unchecked(x, y))
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawWrapProofJson {
+    messages: RawWrapProofMessagesJson,
+    openings: RawWrapProofOpeningsJson,
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawWrapProofMessagesJson {
+    w_comm: Vec<RawProofPolyCommJson>,
+    z_comm: RawProofPolyCommJson,
+    t_comm: RawProofPolyCommJson,
+    #[allow(dead_code)]
+    lookup: Option<serde_json::Value>,
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawWrapProofOpeningsJson {
+    proof: RawOpeningProofJson,
+    evals: RawProofEvaluationsJson,
+    ft_eval1: String,
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawOpeningProofJson {
+    lr: Vec<[RawProofPointJson; 2]>,
+    z_1: String,
+    z_2: String,
+    delta: RawProofPointJson,
+    challenge_polynomial_commitment: RawProofPointJson,
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawProofEvaluationsJson {
+    w: Vec<RawPointEvaluationsJson>,
+    coefficients: Vec<RawPointEvaluationsJson>,
+    z: RawPointEvaluationsJson,
+    s: Vec<RawPointEvaluationsJson>,
+    generic_selector: RawPointEvaluationsJson,
+    poseidon_selector: RawPointEvaluationsJson,
+    complete_add_selector: RawPointEvaluationsJson,
+    mul_selector: RawPointEvaluationsJson,
+    emul_selector: RawPointEvaluationsJson,
+    endomul_scalar_selector: RawPointEvaluationsJson,
+    range_check0_selector: Option<RawPointEvaluationsJson>,
+    range_check1_selector: Option<RawPointEvaluationsJson>,
+    foreign_field_add_selector: Option<RawPointEvaluationsJson>,
+    foreign_field_mul_selector: Option<RawPointEvaluationsJson>,
+    xor_selector: Option<RawPointEvaluationsJson>,
+    rot_selector: Option<RawPointEvaluationsJson>,
+    lookup_aggregation: Option<RawPointEvaluationsJson>,
+    lookup_table: Option<RawPointEvaluationsJson>,
+    lookup_sorted: Vec<Option<RawPointEvaluationsJson>>,
+    runtime_lookup_table: Option<RawPointEvaluationsJson>,
+    runtime_lookup_table_selector: Option<RawPointEvaluationsJson>,
+    xor_lookup_selector: Option<RawPointEvaluationsJson>,
+    lookup_gate_lookup_selector: Option<RawPointEvaluationsJson>,
+    range_check_lookup_selector: Option<RawPointEvaluationsJson>,
+    foreign_field_mul_lookup_selector: Option<RawPointEvaluationsJson>,
+}
+
+#[cfg(feature = "std")]
+#[derive(Deserialize)]
+struct RawProofPolyCommJson(Vec<RawProofPointJson>);
+
+#[cfg(feature = "std")]
+#[derive(Clone)]
+struct RawProofPointJson {
+    x: String,
+    y: String,
+}
+
+#[cfg(feature = "std")]
+struct RawPointEvaluationsJson {
+    zeta: Vec<String>,
+    zeta_omega: Vec<String>,
+}
+
+#[cfg(feature = "std")]
+impl<'de> Deserialize<'de> for RawProofPointJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Array(coords) if coords.len() == 2 => {
+                let x = coords[0]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("invalid x coordinate"))?
+                    .to_string();
+                let y = coords[1]
+                    .as_str()
+                    .ok_or_else(|| serde::de::Error::custom("invalid y coordinate"))?
+                    .to_string();
+                Ok(Self { x, y })
+            }
+            _ => Err(serde::de::Error::custom("expected [x, y] point encoding")),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<'de> Deserialize<'de> for RawPointEvaluationsJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Array(items) if items.len() == 2 => {
+                let zeta = items[0]
+                    .as_array()
+                    .ok_or_else(|| serde::de::Error::custom("invalid zeta evaluations"))?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .ok_or_else(|| serde::de::Error::custom("invalid zeta field"))
+                            .map(ToString::to_string)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let zeta_omega = items[1]
+                    .as_array()
+                    .ok_or_else(|| serde::de::Error::custom("invalid zeta_omega evaluations"))?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .ok_or_else(|| serde::de::Error::custom("invalid zeta_omega field"))
+                            .map(ToString::to_string)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Self { zeta, zeta_omega })
+            }
+            _ => Err(serde::de::Error::custom(
+                "expected [[zeta...], [zeta_omega...]] evaluation encoding",
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+fn parse_raw_wrap_proof(json: &str) -> Result<VestaProof, PicklesError> {
+    let raw: RawWrapProofJson = serde_json::from_str(json)
+        .map_err(|err| PicklesError::InvalidJson(format!("raw wrap proof: {err}")))?;
+
+    let w_comm = raw
+        .messages
+        .w_comm
+        .into_iter()
+        .map(parse_raw_proof_poly_comm)
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .map_err(|_| PicklesError::InvalidJson("raw wrap w_comm length mismatch".into()))?;
+    let t_comm = parse_raw_proof_poly_comm(raw.messages.t_comm)?;
+    let lookup_sorted: [Option<PointEvaluations<Vec<Fp>>>; 5] = raw
+        .openings
+        .evals
+        .lookup_sorted
+        .into_iter()
+        .map(|item| item.map(parse_raw_point_evaluations).transpose())
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .map_err(|_| PicklesError::InvalidJson("raw wrap lookup_sorted length mismatch".into()))?;
+
+    Ok(VestaProof {
+        commitments: ProverCommitments {
+            w_comm,
+            z_comm: parse_raw_proof_poly_comm(raw.messages.z_comm)?,
+            t_comm,
+            lookup: None,
+        },
+        proof: OpeningProof {
+            lr: raw
+                .openings
+                .proof
+                .lr
+                .into_iter()
+                .map(|[left, right]| {
+                    Ok((parse_raw_proof_point(left)?, parse_raw_proof_point(right)?))
+                })
+                .collect::<Result<Vec<_>, PicklesError>>()?,
+            delta: parse_raw_proof_point(raw.openings.proof.delta)?,
+            z1: parse_hex_field(&raw.openings.proof.z_1)?,
+            z2: parse_hex_field(&raw.openings.proof.z_2)?,
+            sg: parse_raw_proof_point(raw.openings.proof.challenge_polynomial_commitment)?,
+        },
+        evals: ProofEvaluations {
+            public: None,
+            w: raw
+                .openings
+                .evals
+                .w
+                .into_iter()
+                .map(parse_raw_point_evaluations)
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .map_err(|_| {
+                    PicklesError::InvalidJson("raw wrap evals.w length mismatch".into())
+                })?,
+            z: parse_raw_point_evaluations(raw.openings.evals.z)?,
+            s: raw
+                .openings
+                .evals
+                .s
+                .into_iter()
+                .map(parse_raw_point_evaluations)
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .map_err(|_| {
+                    PicklesError::InvalidJson("raw wrap evals.s length mismatch".into())
+                })?,
+            coefficients: raw
+                .openings
+                .evals
+                .coefficients
+                .into_iter()
+                .map(parse_raw_point_evaluations)
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .map_err(|_| {
+                    PicklesError::InvalidJson("raw wrap evals.coefficients length mismatch".into())
+                })?,
+            generic_selector: parse_raw_point_evaluations(raw.openings.evals.generic_selector)?,
+            poseidon_selector: parse_raw_point_evaluations(raw.openings.evals.poseidon_selector)?,
+            complete_add_selector: parse_raw_point_evaluations(
+                raw.openings.evals.complete_add_selector,
+            )?,
+            mul_selector: parse_raw_point_evaluations(raw.openings.evals.mul_selector)?,
+            emul_selector: parse_raw_point_evaluations(raw.openings.evals.emul_selector)?,
+            endomul_scalar_selector: parse_raw_point_evaluations(
+                raw.openings.evals.endomul_scalar_selector,
+            )?,
+            range_check0_selector: raw
+                .openings
+                .evals
+                .range_check0_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            range_check1_selector: raw
+                .openings
+                .evals
+                .range_check1_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            foreign_field_add_selector: raw
+                .openings
+                .evals
+                .foreign_field_add_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            foreign_field_mul_selector: raw
+                .openings
+                .evals
+                .foreign_field_mul_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            xor_selector: raw
+                .openings
+                .evals
+                .xor_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            rot_selector: raw
+                .openings
+                .evals
+                .rot_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            lookup_aggregation: raw
+                .openings
+                .evals
+                .lookup_aggregation
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            lookup_table: raw
+                .openings
+                .evals
+                .lookup_table
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            lookup_sorted,
+            runtime_lookup_table: raw
+                .openings
+                .evals
+                .runtime_lookup_table
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            runtime_lookup_table_selector: raw
+                .openings
+                .evals
+                .runtime_lookup_table_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            xor_lookup_selector: raw
+                .openings
+                .evals
+                .xor_lookup_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            lookup_gate_lookup_selector: raw
+                .openings
+                .evals
+                .lookup_gate_lookup_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            range_check_lookup_selector: raw
+                .openings
+                .evals
+                .range_check_lookup_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+            foreign_field_mul_lookup_selector: raw
+                .openings
+                .evals
+                .foreign_field_mul_lookup_selector
+                .map(parse_raw_point_evaluations)
+                .transpose()?,
+        },
+        ft_eval1: parse_hex_field(&raw.openings.ft_eval1)?,
+        prev_challenges: Vec::new(),
+    })
+}
+
+#[cfg(feature = "std")]
+fn parse_raw_proof_poly_comm(raw: RawProofPolyCommJson) -> Result<PolyComm<Vesta>, PicklesError> {
+    Ok(PolyComm::new(
+        raw.0
+            .into_iter()
+            .map(parse_raw_proof_point)
+            .collect::<Result<Vec<_>, _>>()?,
+    ))
+}
+
+#[cfg(feature = "std")]
+fn parse_raw_proof_point(raw: RawProofPointJson) -> Result<Vesta, PicklesError> {
+    let x = parse_hex_field_fq(&raw.x)?;
+    let y = parse_hex_field_fq(&raw.y)?;
+    Ok(Vesta::new_unchecked(x, y))
+}
+
+#[cfg(feature = "std")]
+fn parse_raw_point_evaluations(
+    raw: RawPointEvaluationsJson,
+) -> Result<PointEvaluations<Vec<Fp>>, PicklesError> {
+    Ok(PointEvaluations {
+        zeta: raw
+            .zeta
+            .iter()
+            .map(|field| parse_hex_field(field))
+            .collect::<Result<Vec<_>, _>>()?,
+        zeta_omega: raw
+            .zeta_omega
+            .iter()
+            .map(|field| parse_hex_field(field))
+            .collect::<Result<Vec<_>, _>>()?,
+    })
 }
 
 #[cfg(feature = "std")]

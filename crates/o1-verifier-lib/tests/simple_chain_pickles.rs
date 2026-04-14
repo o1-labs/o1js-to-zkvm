@@ -8,7 +8,8 @@
 #![cfg(feature = "std")]
 
 use o1_verifier_lib::{
-    lower_simple_chain_metadata, lower_simple_chain_public_input_plan, parse_simple_chain_bundle,
+    lower_simple_chain_metadata, lower_simple_chain_public_input_plan,
+    lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle,
 };
 
 const SIMPLE_CHAIN_BUNDLE_JSON: &str = include_str!("../../../fixtures/simple_chain_bundle.json");
@@ -31,6 +32,7 @@ fn test_parse_simple_chain_bundle() {
 
     assert_eq!(bundle.fixtures.len(), 2);
     assert_eq!(bundle.verification_key.0, vec![1, 2, 3]);
+    assert!(bundle.exported_raw_wrap_verifier.is_none());
 
     let base_case = bundle.fixture("base_case").expect("base_case fixture");
     assert_eq!(base_case.statement.to_fields().len(), 1);
@@ -192,4 +194,27 @@ fn test_parse_exported_wrap_public_input_fields() {
         exported.hex_fields[12]
     );
     assert_eq!(exported.fields.len(), 40);
+}
+
+#[test]
+fn test_lower_simple_chain_raw_wrap_artifacts() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    assert!(bundle.exported_raw_wrap_verifier.is_some());
+
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    assert!(request.exported_raw_wrap_proof.is_some());
+
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_eq!(lowered.public_input.len(), 40);
+    assert_eq!(lowered.verifier_index.domain.log_size_of_group, 14);
+    assert_eq!(lowered.verifier_index.public, 40);
+    assert_eq!(lowered.verifier_index.prev_challenges, 2);
+    assert_eq!(lowered.proof.commitments.w_comm.len(), 15);
+    assert_eq!(lowered.proof.commitments.t_comm.len(), 7);
+    assert_eq!(lowered.proof.proof.lr.len(), 15);
 }

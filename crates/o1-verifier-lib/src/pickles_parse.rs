@@ -10,17 +10,21 @@ use std::str::FromStr;
 use ark_ff::PrimeField;
 use mina_curves::pasta::Fp;
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
-    ExportedWrapOracleFields, ExportedWrapPublicInput, PicklesVerifyRequest, SideLoadedProofBytes,
-    SideLoadedVkBytes, SimpleChainFixture, SimpleChainFixtureBundle, SimpleChainStatement,
+    ExportedRawWrapProof, ExportedRawWrapVerifier, ExportedWrapOracleFields,
+    ExportedWrapPublicInput, PicklesVerifyRequest, SideLoadedProofBytes, SideLoadedVkBytes,
+    SimpleChainFixture, SimpleChainFixtureBundle, SimpleChainStatement,
 };
 
 #[derive(Deserialize)]
 struct RawSimpleChainBundle {
     #[serde(default)]
     side_loaded_verification_key_base64: Option<String>,
+    #[serde(default)]
+    raw_wrap_verification_key_json: Option<Value>,
     rust_bundle: RawRustBundle,
 }
 
@@ -30,6 +34,8 @@ struct RawRustBundle {
     bundle_version: u32,
     #[serde(default)]
     side_loaded_verification_key_base64: Option<String>,
+    #[serde(default)]
+    raw_wrap_verification_key_json: Option<Value>,
     fixtures: Vec<RawRustFixture>,
 }
 
@@ -48,6 +54,8 @@ struct RawRustInputs {
     combined_inner_product_field: Option<String>,
     #[serde(default)]
     messages_for_next_step_proof_field: Option<String>,
+    #[serde(default)]
+    raw_wrap_proof_json: Option<Value>,
     side_loaded_proof_base64: String,
 }
 
@@ -109,6 +117,13 @@ pub fn parse_simple_chain_bundle(
         "side_loaded_verification_key_base64",
         &vk_base64,
     )?);
+    let exported_raw_wrap_verifier = raw
+        .rust_bundle
+        .raw_wrap_verification_key_json
+        .or(raw.raw_wrap_verification_key_json)
+        .map(|json| ExportedRawWrapVerifier {
+            verifier_index_json: json.to_string(),
+        });
 
     let fixtures = raw
         .rust_bundle
@@ -148,6 +163,13 @@ pub fn parse_simple_chain_bundle(
                     ))
                 }
             };
+            let exported_raw_wrap_proof =
+                fixture
+                    .rust_inputs
+                    .raw_wrap_proof_json
+                    .map(|json| ExportedRawWrapProof {
+                        proof_json: json.to_string(),
+                    });
 
             Ok(SimpleChainFixture {
                 name: fixture.name,
@@ -155,12 +177,14 @@ pub fn parse_simple_chain_bundle(
                 proof,
                 exported_wrap_public_input,
                 exported_wrap_oracle_fields,
+                exported_raw_wrap_proof,
             })
         })
         .collect::<Result<Vec<_>, PicklesError>>()?;
 
     Ok(SimpleChainFixtureBundle {
         verification_key,
+        exported_raw_wrap_verifier,
         fixtures,
     })
 }

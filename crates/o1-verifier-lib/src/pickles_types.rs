@@ -183,6 +183,20 @@ pub struct ExportedWrapOracleFields {
     pub messages_for_next_step_proof_field_hex: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Raw wrap verifier artifacts exported directly by Mina in Kimchi-compatible
+/// JSON form.
+pub struct ExportedRawWrapVerifier {
+    pub verifier_index_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Raw wrap proof artifact exported directly by Mina in Kimchi-compatible JSON
+/// form.
+pub struct ExportedRawWrapProof {
+    pub proof_json: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 /// The current Rust model of the `Simple_chain` application statement.
 pub struct SimpleChainStatement {
@@ -216,12 +230,14 @@ pub struct SimpleChainFixture {
     pub proof: SideLoadedProofBytes,
     pub exported_wrap_public_input: Option<ExportedWrapPublicInput>,
     pub exported_wrap_oracle_fields: Option<ExportedWrapOracleFields>,
+    pub exported_raw_wrap_proof: Option<ExportedRawWrapProof>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 /// Parsed Mina exporter bundle for `Simple_chain`.
 pub struct SimpleChainFixtureBundle {
     pub verification_key: SideLoadedVkBytes,
+    pub exported_raw_wrap_verifier: Option<ExportedRawWrapVerifier>,
     pub fixtures: Vec<SimpleChainFixture>,
 }
 
@@ -243,6 +259,8 @@ impl SimpleChainFixtureBundle {
             statement: fixture.statement.clone(),
             exported_wrap_public_input: fixture.exported_wrap_public_input.clone(),
             exported_wrap_oracle_fields: fixture.exported_wrap_oracle_fields.clone(),
+            exported_raw_wrap_verifier: self.exported_raw_wrap_verifier.clone(),
+            exported_raw_wrap_proof: fixture.exported_raw_wrap_proof.clone(),
         })
     }
 }
@@ -255,4 +273,6 @@ pub struct PicklesVerifyRequest {
     pub statement: SimpleChainStatement,
     pub exported_wrap_public_input: Option<ExportedWrapPublicInput>,
     pub exported_wrap_oracle_fields: Option<ExportedWrapOracleFields>,
+    pub exported_raw_wrap_verifier: Option<ExportedRawWrapVerifier>,
+    pub exported_raw_wrap_proof: Option<ExportedRawWrapProof>,
 }
