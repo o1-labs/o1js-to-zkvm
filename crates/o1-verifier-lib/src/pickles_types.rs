@@ -175,6 +175,14 @@ pub struct ExportedWrapPublicInput {
     pub fields: Vec<Fp>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Exact oracle values exported by Mina for wrap public-input slots Rust does not
+/// yet derive from first principles.
+pub struct ExportedWrapOracleFields {
+    pub combined_inner_product_field_hex: String,
+    pub messages_for_next_step_proof_field_hex: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 /// The current Rust model of the `Simple_chain` application statement.
 pub struct SimpleChainStatement {
@@ -207,6 +215,7 @@ pub struct SimpleChainFixture {
     pub statement: SimpleChainStatement,
     pub proof: SideLoadedProofBytes,
     pub exported_wrap_public_input: Option<ExportedWrapPublicInput>,
+    pub exported_wrap_oracle_fields: Option<ExportedWrapOracleFields>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -233,6 +242,7 @@ impl SimpleChainFixtureBundle {
             proof: fixture.proof.clone(),
             statement: fixture.statement.clone(),
             exported_wrap_public_input: fixture.exported_wrap_public_input.clone(),
+            exported_wrap_oracle_fields: fixture.exported_wrap_oracle_fields.clone(),
         })
     }
 }
@@ -244,4 +254,5 @@ pub struct PicklesVerifyRequest {
     pub proof: SideLoadedProofBytes,
     pub statement: SimpleChainStatement,
     pub exported_wrap_public_input: Option<ExportedWrapPublicInput>,
+    pub exported_wrap_oracle_fields: Option<ExportedWrapOracleFields>,
 }

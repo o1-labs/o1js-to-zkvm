@@ -13,8 +13,8 @@ use serde::Deserialize;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
-    ExportedWrapPublicInput, PicklesVerifyRequest, SideLoadedProofBytes, SideLoadedVkBytes,
-    SimpleChainFixture, SimpleChainFixtureBundle, SimpleChainStatement,
+    ExportedWrapOracleFields, ExportedWrapPublicInput, PicklesVerifyRequest, SideLoadedProofBytes,
+    SideLoadedVkBytes, SimpleChainFixture, SimpleChainFixtureBundle, SimpleChainStatement,
 };
 
 #[derive(Deserialize)]
@@ -44,6 +44,10 @@ struct RawRustInputs {
     statement_field_strings: Vec<String>,
     #[serde(default)]
     wrap_public_input_fields: Option<Vec<String>>,
+    #[serde(default)]
+    combined_inner_product_field: Option<String>,
+    #[serde(default)]
+    messages_for_next_step_proof_field: Option<String>,
     side_loaded_proof_base64: String,
 }
 
@@ -126,12 +130,31 @@ pub fn parse_simple_chain_bundle(
                     Ok(ExportedWrapPublicInput { hex_fields, fields })
                 })
                 .transpose()?;
+            let exported_wrap_oracle_fields = match (
+                fixture.rust_inputs.combined_inner_product_field,
+                fixture.rust_inputs.messages_for_next_step_proof_field,
+            ) {
+                (
+                    Some(combined_inner_product_field_hex),
+                    Some(messages_for_next_step_proof_field_hex),
+                ) => Some(ExportedWrapOracleFields {
+                    combined_inner_product_field_hex,
+                    messages_for_next_step_proof_field_hex,
+                }),
+                (None, None) => None,
+                _ => {
+                    return Err(PicklesError::InvalidJson(
+                        "incomplete exported wrap oracle fields".into(),
+                    ))
+                }
+            };
 
             Ok(SimpleChainFixture {
                 name: fixture.name,
                 statement,
                 proof,
                 exported_wrap_public_input,
+                exported_wrap_oracle_fields,
             })
         })
         .collect::<Result<Vec<_>, PicklesError>>()?;

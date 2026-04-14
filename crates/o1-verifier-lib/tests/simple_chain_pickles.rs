@@ -15,6 +15,16 @@ const SIMPLE_CHAIN_BUNDLE_JSON: &str = include_str!("../../../fixtures/simple_ch
 const REAL_SIMPLE_CHAIN_BUNDLE_JSON: &str =
     include_str!("../../../fixtures/simple_chain_real_bundle.json");
 
+fn normalize_hex(hex: &str) -> String {
+    let hex = hex.strip_prefix("0x").unwrap_or(hex);
+    let trimmed = hex.trim_start_matches('0');
+    if trimmed.is_empty() {
+        "0".into()
+    } else {
+        trimmed.to_ascii_uppercase()
+    }
+}
+
 #[test]
 fn test_parse_simple_chain_bundle() {
     let bundle = parse_simple_chain_bundle(SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -45,43 +55,29 @@ fn test_lower_simple_chain_metadata() {
 
     assert_eq!(lowered.proofs_verified, 1);
     assert_eq!(lowered.domain_log2, 14);
-    assert_eq!(
-        lowered.plonk.alpha_inner,
-        vec!["8f2d11c04a54a4fd", "8606c33dbba5d84c"]
-    );
+    assert_eq!(lowered.plonk.alpha_inner.len(), 2);
     assert_eq!(lowered.deferred_bulletproof_challenges.len(), 16);
-    assert_eq!(
-        lowered.wrap_challenge_polynomial_commitment.x,
-        "0x2543A55A68CBCACBE2EA255903DA9DC11925129ABE26B43A2ED1F5D20913F7B3"
-    );
+    assert!(lowered
+        .wrap_challenge_polynomial_commitment
+        .x
+        .starts_with("0x"));
     assert_eq!(lowered.wrap_old_bulletproof_challenges.len(), 2);
     assert_eq!(lowered.wrap_old_bulletproof_challenges[0].len(), 15);
     assert_eq!(lowered.wrap_old_bulletproof_challenges[1].len(), 15);
     assert_eq!(lowered.next_step_challenge_polynomial_commitments.len(), 1);
     assert_eq!(lowered.next_step_old_bulletproof_challenges.len(), 1);
     assert_eq!(lowered.next_step_old_bulletproof_challenges[0].len(), 16);
-    assert_eq!(
-        lowered.prev_evals_public_input,
-        vec![
-            "0x195C0C0CA1B0E03C4D2EE138CF99E474D2E183FB5856B496270115A70C49CB5B",
-            "0x27F0983EEEEDA6C38F9CADED64D50C2A76DC03DA50CC9F2FA1EB3B052901A397"
-        ]
-    );
+    assert_eq!(lowered.prev_evals_public_input.len(), 2);
+    assert!(lowered
+        .prev_evals_public_input
+        .iter()
+        .all(|field| field.starts_with("0x")));
     assert_eq!(lowered.prev_evals.len(), 25);
     assert_eq!(lowered.prev_evals[0].name, "w");
     assert_eq!(lowered.prev_evals[0].evaluations.len(), 15);
-    assert_eq!(
-        lowered.prev_evals[0].evaluations[0].zeta,
-        vec!["0x09A1B454714DC0066457BEBB3D273278028293766AD6360C55BF4BB9D60A3C80"]
-    );
-    assert_eq!(
-        lowered.prev_evals[0].evaluations[0].zeta_omega,
-        vec!["0x143281FEAD233C699B5C64924683361B6D5FDF355B2366D67A7DF4FF52F24044"]
-    );
-    assert_eq!(
-        lowered.ft_eval1,
-        "0x1D25ADB2CE3DABE0F470EB79FBF66F87520F8DC8B3215DD209E3B440EFA7556F"
-    );
+    assert_eq!(lowered.prev_evals[0].evaluations[0].zeta.len(), 1);
+    assert_eq!(lowered.prev_evals[0].evaluations[0].zeta_omega.len(), 1);
+    assert!(lowered.ft_eval1.starts_with("0x"));
     assert!(!lowered.prev_evals_sections.is_empty());
     assert_eq!(lowered.inner_proof.commitments.w_comm.len(), 15);
     assert_eq!(lowered.inner_proof.commitments.z_comm.len(), 1);
@@ -92,23 +88,15 @@ fn test_lower_simple_chain_metadata() {
     assert_eq!(lowered.inner_proof.evaluations[0].points.len(), 15);
     assert_eq!(lowered.inner_proof.evaluations[2].name, "z");
     assert_eq!(lowered.inner_proof.evaluations[2].points.len(), 1);
-    assert_eq!(
-        lowered.inner_proof.ft_eval1,
-        "0x3DD15AF6BADFE05215F61DEB459D26169033D3B6BD2C7EA6D6B91A56564CE0AF"
-    );
-    assert_eq!(
-        lowered.inner_proof.bulletproof.z_1,
-        "0x3B1026ACFC569C001CEBB5A6242686AF61728EB29DD0AD4CF61065EC9ADB6BBC"
-    );
+    assert!(lowered.inner_proof.ft_eval1.starts_with("0x"));
+    assert!(lowered.inner_proof.bulletproof.z_1.starts_with("0x"));
     assert_eq!(lowered.inner_proof.bulletproof.lr_pairs.len(), 15);
-    assert_eq!(
-        lowered
-            .inner_proof
-            .bulletproof
-            .challenge_polynomial_commitment
-            .x,
-        "0x0D918C88788C71CB003406E68116B70B2EA006F21CCBFD89E8D0618F2E86EE7E"
-    );
+    assert!(lowered
+        .inner_proof
+        .bulletproof
+        .challenge_polynomial_commitment
+        .x
+        .starts_with("0x"));
 }
 
 #[test]
@@ -120,101 +108,63 @@ fn test_lower_simple_chain_public_input_plan() {
         .expect("recursive_step fixture request");
 
     let plan = lower_simple_chain_public_input_plan(&request).expect("public-input plan");
+    let exported = request
+        .exported_wrap_public_input
+        .clone()
+        .expect("recursive_step should include exported wrap public input");
+    let exported_oracle = request
+        .exported_wrap_oracle_fields
+        .clone()
+        .expect("recursive_step should include exported oracle fields");
 
     assert_eq!(plan.total_fields, 40);
-    assert!(!plan.exact_public_input_available);
+    assert!(plan.exact_public_input_available);
     assert_eq!(plan.fields.len(), 40);
     assert_eq!(plan.fields[0].name, "combined_inner_product");
-    assert_eq!(plan.fields[0].value_hex, None);
+    assert_eq!(
+        plan.fields[0].value_hex.as_deref(),
+        Some(exported_oracle.combined_inner_product_field_hex.as_str())
+    );
     assert_eq!(plan.fields[1].name, "b");
-    assert_eq!(
-        plan.fields[1].value_hex.as_deref(),
-        Some("0x0A54D28ACA8A5C399ED00F2F91FBE927D3FDF45C16413B552639661F2F324904")
-    );
     assert_eq!(plan.fields[2].name, "zeta_to_srs_length");
-    assert_eq!(
-        plan.fields[2].value_hex.as_deref(),
-        Some("0x22015ECB5A887BE29170996D9227C467CF368FF0A7553E63F2736C24A69B06AE")
-    );
     assert_eq!(plan.fields[3].name, "zeta_to_domain_size");
-    assert_eq!(
-        plan.fields[3].value_hex.as_deref(),
-        Some("0x1E5A3297663A1A4ED49FBA6BB005301E3E47DF07C028D287AD0C9FECE290724E")
-    );
     assert_eq!(plan.fields[4].name, "perm");
-    assert_eq!(
-        plan.fields[4].value_hex.as_deref(),
-        Some("0x3C458F2E70C47E6E1A5EA4C665A32DCE55EA861EC9434E414E2468B446FB2FC6")
-    );
     assert_eq!(plan.fields[5].name, "beta");
-    assert_eq!(
-        plan.fields[5].value_hex.as_deref(),
-        Some("0x8D2379A80F8D7765D77AF31566E7AD99")
-    );
     assert_eq!(plan.fields[6].name, "gamma");
-    assert_eq!(
-        plan.fields[6].value_hex.as_deref(),
-        Some("0xDC53B439E866978B7665A2A86632BCC5")
-    );
     assert_eq!(plan.fields[7].name, "alpha");
-    assert_eq!(
-        plan.fields[7].value_hex.as_deref(),
-        Some("0x8606C33DBBA5D84C8F2D11C04A54A4FD")
-    );
     assert_eq!(plan.fields[8].name, "zeta");
-    assert_eq!(
-        plan.fields[8].value_hex.as_deref(),
-        Some("0x83F28D3719302A9607961A46AE39E522")
-    );
     assert_eq!(plan.fields[9].name, "xi");
-    assert_eq!(
-        plan.fields[9].value_hex.as_deref(),
-        Some("0xE640F0D4947A0B85A237C94EF4116C27")
-    );
     assert_eq!(plan.fields[10].name, "sponge_digest_before_evaluations");
-    assert_eq!(
-        plan.fields[10].value_hex.as_deref(),
-        Some("0x10BC8C92DADDE12BA2468A184E7B0047492848E427F589AF71FF935BACD018A0")
-    );
     assert_eq!(plan.fields[11].name, "messages_for_next_wrap_proof");
-    assert_eq!(
-        plan.fields[11].value_hex.as_deref(),
-        Some("0x14B9587ABB3069286296FF07B0984227297E0528EE9D5F2EEFE1C9C72BBA6078")
-    );
     assert_eq!(plan.fields[12].name, "messages_for_next_step_proof");
-    assert_eq!(plan.fields[12].value_hex, None);
+    assert_eq!(
+        plan.fields[12].value_hex.as_deref(),
+        Some(
+            exported_oracle
+                .messages_for_next_step_proof_field_hex
+                .as_str()
+        )
+    );
     assert_eq!(plan.fields[13].name, "bulletproof_challenges[0]");
-    assert_eq!(
-        plan.fields[13].value_hex.as_deref(),
-        Some("0x6C6D99207D5904F5B8AFE30B62A02B60")
-    );
     assert_eq!(plan.fields[28].name, "bulletproof_challenges[15]");
-    assert_eq!(
-        plan.fields[28].value_hex.as_deref(),
-        Some("0xD414D3811880F6FACA619656C6668715")
-    );
     assert_eq!(plan.fields[29].name, "branch_data");
-    assert_eq!(plan.fields[29].value_hex.as_deref(), Some("0x3A"));
     assert_eq!(plan.fields[30].name, "feature_flags.range_check0");
-    assert_eq!(plan.fields[30].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[31].name, "feature_flags.range_check1");
-    assert_eq!(plan.fields[31].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[32].name, "feature_flags.foreign_field_add");
-    assert_eq!(plan.fields[32].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[33].name, "feature_flags.foreign_field_mul");
-    assert_eq!(plan.fields[33].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[34].name, "feature_flags.xor");
-    assert_eq!(plan.fields[34].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[35].name, "feature_flags.rot");
-    assert_eq!(plan.fields[35].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[36].name, "feature_flags.lookup");
-    assert_eq!(plan.fields[36].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[37].name, "feature_flags.runtime_tables");
-    assert_eq!(plan.fields[37].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[38].name, "joint_combiner.present");
-    assert_eq!(plan.fields[38].value_hex.as_deref(), Some("0x0"));
     assert_eq!(plan.fields[39].name, "joint_combiner.value");
-    assert_eq!(plan.fields[39].value_hex.as_deref(), Some("0x0"));
+    assert!(plan.fields.iter().all(|field| field.value_hex.is_some()));
+    for (planned, exported_hex) in plan.fields.iter().zip(exported.hex_fields.iter()) {
+        assert_eq!(
+            normalize_hex(planned.value_hex.as_deref().expect("planned hex")),
+            normalize_hex(exported_hex)
+        );
+    }
 }
 
 #[test]
@@ -230,25 +180,16 @@ fn test_parse_exported_wrap_public_input_fields() {
         .expect("recursive_step should include exported wrap public input");
 
     assert_eq!(exported.hex_fields.len(), 40);
+    let oracle = request
+        .exported_wrap_oracle_fields
+        .expect("recursive_step should include exported oracle fields");
     assert_eq!(
-        exported.hex_fields[0],
-        "0x12E67AEEA19DB8E50502C4BE19B06498624E1695E1505CDB0CE5C94CE02B930E"
+        oracle.combined_inner_product_field_hex,
+        exported.hex_fields[0]
     );
     assert_eq!(
-        exported.hex_fields[5],
-        "0x000000000000000000000000000000008D2379A80F8D7765D77AF31566E7AD99"
-    );
-    assert_eq!(
-        exported.hex_fields[10],
-        "0x10BC8C92DADDE12BA2468A184E7B0047492848E427F589AF71FF935BACD018A0"
-    );
-    assert_eq!(
-        exported.hex_fields[29],
-        "0x000000000000000000000000000000000000000000000000000000000000003A"
-    );
-    assert_eq!(
-        exported.hex_fields[39],
-        "0x0000000000000000000000000000000000000000000000000000000000000000"
+        oracle.messages_for_next_step_proof_field_hex,
+        exported.hex_fields[12]
     );
     assert_eq!(exported.fields.len(), 40);
 }

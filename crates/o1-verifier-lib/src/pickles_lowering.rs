@@ -14,8 +14,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use ark_ff::{Field, PrimeField};
-use kimchi::curve::KimchiCurve;
 use kimchi::circuits::domains::EvaluationDomains;
+use kimchi::curve::KimchiCurve;
 use kimchi::plonk_sponge::FrSponge;
 use mina_curves::pasta::{Fp, Fq, Pallas};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
@@ -68,22 +68,32 @@ pub fn lower_simple_chain_public_input_plan(
     request: &PicklesVerifyRequest,
 ) -> Result<WrapPublicInputPlan, PicklesError> {
     let metadata = lower_simple_chain_metadata(request)?;
-    build_wrap_public_input_plan(&metadata)
+    build_wrap_public_input_plan(request, &metadata)
 }
 
 #[cfg(feature = "std")]
 fn build_wrap_public_input_plan(
+    request: &PicklesVerifyRequest,
     metadata: &SideLoadedProofMetadata,
 ) -> Result<WrapPublicInputPlan, PicklesError> {
     let derived = derive_wrap_deferred_inputs(metadata)?;
     let deferred_bulletproof_len = metadata.deferred_bulletproof_challenges.len();
     let mut fields = Vec::with_capacity(24 + deferred_bulletproof_len);
 
-    fields.push(missing_field(
-        0,
-        "combined_inner_product",
-        "current Rust derivation still disagrees with Mina's oracle; ft_eval0 / combined evaluation lowering is not trustworthy yet",
-    ));
+    if let Some(oracle) = &request.exported_wrap_oracle_fields {
+        fields.push(known_field(
+            0,
+            "combined_inner_product",
+            oracle.combined_inner_product_field_hex.clone(),
+            "exact packed wrap public-input slot exported by Mina while Rust-side ft_eval0 / combined evaluation lowering is still incomplete",
+        ));
+    } else {
+        fields.push(missing_field(
+            0,
+            "combined_inner_product",
+            "current Rust derivation still disagrees with Mina's oracle; ft_eval0 / combined evaluation lowering is not trustworthy yet",
+        ));
+    }
     fields.push(known_field(
         1,
         "b",
@@ -150,11 +160,20 @@ fn build_wrap_public_input_plan(
         derived.messages_for_next_wrap_proof_digest_hex.clone(),
         "Poseidon digest of the prepared next-wrap message payload",
     ));
-    fields.push(missing_field(
-        12,
-        "messages_for_next_step_proof",
-        "requires Mina hash over prepared next-step messages including step verification-key commitments",
-    ));
+    if let Some(oracle) = &request.exported_wrap_oracle_fields {
+        fields.push(known_field(
+            12,
+            "messages_for_next_step_proof",
+            oracle.messages_for_next_step_proof_field_hex.clone(),
+            "exact packed wrap public-input slot exported by Mina while Rust-side next-step message hashing and VK lowering are incomplete",
+        ));
+    } else {
+        fields.push(missing_field(
+            12,
+            "messages_for_next_step_proof",
+            "requires Mina hash over prepared next-step messages including step verification-key commitments",
+        ));
+    }
 
     for (offset, challenge) in metadata.deferred_bulletproof_challenges.iter().enumerate() {
         fields.push(known_field(
@@ -287,10 +306,7 @@ fn derive_transcript_challenges(
 }
 
 #[cfg(feature = "std")]
-fn derive_b_value_hex(
-    metadata: &SideLoadedProofMetadata,
-    r: Fp,
-) -> Result<String, PicklesError> {
+fn derive_b_value_hex(metadata: &SideLoadedProofMetadata, r: Fp) -> Result<String, PicklesError> {
     let zeta = scalar_challenge_field_from_limbs(&metadata.plonk.zeta_inner)?;
     let domain = EvaluationDomains::<Fp>::create(1usize << usize::from(metadata.domain_log2))
         .map_err(|err| PicklesError::InvalidSexp(format!("invalid step domain: {err}")))?;
@@ -447,9 +463,8 @@ fn type1_shift_constant() -> Fp {
 fn hash_messages_for_next_wrap_proof(
     metadata: &SideLoadedProofMetadata,
 ) -> Result<String, PicklesError> {
-    let mut fields = flatten_wrap_bulletproof_challenges_for_digest(
-        &metadata.wrap_old_bulletproof_challenges,
-    )?;
+    let mut fields =
+        flatten_wrap_bulletproof_challenges_for_digest(&metadata.wrap_old_bulletproof_challenges)?;
     fields.push(parse_hex_field_fq(
         &metadata.wrap_challenge_polynomial_commitment.x,
     )?);
@@ -823,7 +838,9 @@ fn binding_payload_items<'a>(
     key: &'static str,
 ) -> Result<&'a [sexp::Sexp], PicklesError> {
     if let Some(entry) = entries.iter().find(|entry| match peel_singletons(entry) {
-        sexp::Sexp::List(items) => matches!(items.first(), Some(first) if atom(first).ok() == Some(key)),
+        sexp::Sexp::List(items) => {
+            matches!(items.first(), Some(first) if atom(first).ok() == Some(key))
+        }
         _ => false,
     }) {
         let items = list_items(entry)?;
@@ -1218,13 +1235,14 @@ fn parse_named_field_eval_sections(
 
     let mut sections = Vec::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
-        sections.push(parse_named_field_eval_section(entry).map_err(|err| match err {
-            PicklesError::InvalidSexp(message) => PicklesError::InvalidSexp(format!(
-                "section[{index}]={} {message}",
-                entry
-            )),
-            other => other,
-        })?);
+        sections.push(
+            parse_named_field_eval_section(entry).map_err(|err| match err {
+                PicklesError::InvalidSexp(message) => {
+                    PicklesError::InvalidSexp(format!("section[{index}]={} {message}", entry))
+                }
+                other => other,
+            })?,
+        );
     }
     Ok(sections)
 }
@@ -1496,7 +1514,9 @@ fn parse_hex_field(hex: &str) -> Result<Fp, PicklesError> {
         .map(|i| u8::from_str_radix(&normalized[i..i + 2], 16))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| {
-            PicklesError::InvalidFieldElement(format!("invalid canonical hex field: 0x{normalized}"))
+            PicklesError::InvalidFieldElement(format!(
+                "invalid canonical hex field: 0x{normalized}"
+            ))
         })?;
 
     Ok(Fp::from_be_bytes_mod_order(&bytes))
@@ -1522,7 +1542,9 @@ fn parse_hex_field_fq(hex: &str) -> Result<Fq, PicklesError> {
         .map(|i| u8::from_str_radix(&normalized[i..i + 2], 16))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| {
-            PicklesError::InvalidFieldElement(format!("invalid canonical hex field: 0x{normalized}"))
+            PicklesError::InvalidFieldElement(format!(
+                "invalid canonical hex field: 0x{normalized}"
+            ))
         })?;
 
     Ok(Fq::from_be_bytes_mod_order(&bytes))
