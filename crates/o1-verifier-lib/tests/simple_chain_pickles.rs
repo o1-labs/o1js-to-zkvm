@@ -8,7 +8,7 @@
 #![cfg(feature = "std")]
 
 use o1_verifier_lib::{
-    lower_simple_chain_metadata, lower_simple_chain_public_input_plan,
+    lower_simple_chain_metadata, lower_simple_chain_public_input_plan, lower_simple_chain_request,
     lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle,
 };
 
@@ -258,4 +258,19 @@ fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     assert_eq!(lowered.proof.commitments.w_comm.len(), 15);
     assert_eq!(lowered.proof.commitments.t_comm.len(), 7);
     assert_eq!(lowered.proof.proof.lr.len(), 15);
+}
+
+#[test]
+fn test_lower_simple_chain_request_reconstructs_srs() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+
+    let lowered = lower_simple_chain_request(&request).expect("lowering should succeed");
+
+    assert_eq!(lowered.public_input.len(), 40);
+    assert_eq!(lowered.verifier_index.max_poly_size, 32768);
+    assert_eq!(lowered.verifier_index.srs.g.len(), 32768);
 }

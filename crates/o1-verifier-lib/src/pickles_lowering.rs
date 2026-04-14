@@ -13,7 +13,11 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use ark_ff::{Field, PrimeField};
+use ark_ec::AffineRepr;
+use ark_ff::{BigInteger, Field, PrimeField};
+#[cfg(feature = "std")]
+use blake2::{Blake2b512, Digest};
+use groupmap::GroupMap;
 use kimchi::circuits::domains::EvaluationDomains;
 use kimchi::curve::KimchiCurve;
 #[cfg(feature = "std")]
@@ -28,6 +32,8 @@ use mina_poseidon::poseidon::{ArithmeticSponge, Sponge};
 use mina_poseidon::sponge::ScalarChallenge;
 #[cfg(feature = "std")]
 use poly_commitment::commitment::PolyComm;
+use poly_commitment::commitment::CommitmentCurve;
+use poly_commitment::ipa::SRS;
 #[cfg(feature = "std")]
 use poly_commitment::ipa::OpeningProof;
 #[cfg(feature = "std")]
@@ -59,10 +65,25 @@ pub struct LoweredRawWrapArtifacts {
 /// The final goal of this function is to bridge:
 /// `PicklesVerifyRequest -> (VerifierIndex, ProverProof, public_input)`.
 pub fn lower_simple_chain_request(
-    _request: &PicklesVerifyRequest,
+    request: &PicklesVerifyRequest,
 ) -> Result<LoweredWrapInstance, PicklesError> {
+    #[cfg(feature = "std")]
+    {
+        let mut lowered = lower_simple_chain_raw_wrap_artifacts(request)?;
+        lowered.verifier_index.srs = alloc::sync::Arc::new(reconstruct_wrap_srs(
+            lowered.verifier_index.max_poly_size,
+        )?);
+
+        return Ok(LoweredWrapInstance {
+            verifier_index: lowered.verifier_index,
+            proof: lowered.proof,
+            public_input: lowered.public_input,
+        });
+    }
+
+    #[allow(unreachable_code)]
     Err(PicklesError::LoweringNotImplemented(
-        "Pickles side-loaded proof/VK lowering reaches decoded proof metadata, but wrap verification-key decoding and full Kimchi reconstruction are not implemented yet",
+        "Pickles verification from Mina-exported raw wrap artifacts requires the std-gated lowering path",
     ))
 }
 
@@ -91,10 +112,9 @@ pub fn lower_simple_chain_public_input_plan(
 /// Deserialize the raw wrap verifier/proof JSON artifacts exported by Mina into
 /// the Rust Kimchi types already used by the low-level verifier.
 ///
-/// This does not complete end-to-end verification yet because the exported wrap
-/// verifier index still omits the SRS. The returned verifier index therefore
-/// still needs its `srs`, `endo`, and linearization data reconstructed before it
-/// can be passed to `verify_kimchi_proof`.
+/// This lowers the raw wrap verifier and proof JSON into the Rust Kimchi types
+/// already used by the low-level verifier. The final high-level lowering path
+/// still has to attach the real wrap SRS before verification.
 pub fn lower_simple_chain_raw_wrap_artifacts(
     request: &PicklesVerifyRequest,
 ) -> Result<LoweredRawWrapArtifacts, PicklesError> {
@@ -120,6 +140,66 @@ pub fn lower_simple_chain_raw_wrap_artifacts(
         proof,
         public_input,
     })
+}
+
+fn reconstruct_wrap_srs(max_poly_size: usize) -> Result<SRS<Vesta>, PicklesError> {
+    if max_poly_size == 0 {
+        return Err(PicklesError::InvalidJson(
+            "raw wrap verifier index has max_poly_size = 0".into(),
+        ));
+    }
+
+    let map = <Vesta as CommitmentCurve>::Map::setup();
+    let g = (0..max_poly_size)
+        .map(|i| {
+            let mut h = Blake2b512::new();
+            #[allow(clippy::cast_possible_truncation)]
+            h.update((i as u32).to_be_bytes());
+            point_of_random_bytes_vesta(&map, &h.finalize())
+        })
+        .collect();
+
+    let h = {
+        let mut digest = Blake2b512::new();
+        digest.update(b"srs_misc");
+        digest.update(0_u32.to_be_bytes());
+        point_of_random_bytes_vesta(&map, &digest.finalize())
+    };
+
+    let mut srs = SRS::<Vesta>::default();
+    srs.g = g;
+    srs.h = h;
+    Ok(srs)
+}
+
+#[cfg(feature = "std")]
+fn point_of_random_bytes_vesta(
+    map: &<Vesta as CommitmentCurve>::Map,
+    random_bytes: &[u8],
+) -> Vesta {
+    const N: usize = 31;
+    let extension_degree = <Fq as Field>::extension_degree() as usize;
+    let mut base_fields = Vec::with_capacity(N * extension_degree);
+
+    for base_count in 0..extension_degree {
+        let mut bits = [false; 8 * N];
+        let offset = base_count * N;
+        for i in 0..N {
+            for j in 0..8 {
+                bits[8 * i + j] = (random_bytes[offset + i] >> j) & 1 == 1;
+            }
+        }
+
+        let n = <<Fq as Field>::BasePrimeField as PrimeField>::BigInt::from_bits_be(&bits);
+        let t = <<Fq as Field>::BasePrimeField as PrimeField>::from_bigint(n)
+            .expect("packing code has a bug");
+        base_fields.push(t);
+    }
+
+    let t = Fq::from_base_prime_field_elems(base_fields)
+        .expect("invalid extension-field packing for SRS generation");
+    let (x, y) = map.to_group(t);
+    Vesta::of_coordinates(x, y).mul_by_cofactor()
 }
 
 #[cfg(feature = "std")]
