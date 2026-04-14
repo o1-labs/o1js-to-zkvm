@@ -34,6 +34,12 @@ struct FixtureOutput {
     public_input_plan_status: &'static str,
     public_input_plan: Option<PublicInputPlanOutput>,
     public_input_plan_error: Option<String>,
+    exported_wrap_public_input_status: &'static str,
+    exported_wrap_public_input: Option<Vec<String>>,
+    exported_wrap_public_input_error: Option<String>,
+    public_input_comparison_status: &'static str,
+    public_input_comparison: Option<PublicInputComparisonOutput>,
+    public_input_comparison_error: Option<String>,
     verification_status: &'static str,
     verification: Option<bool>,
     verification_error: Option<String>,
@@ -147,6 +153,24 @@ struct PublicInputFieldOutput {
     name: String,
     value_hex: Option<String>,
     source: String,
+}
+
+#[derive(Serialize)]
+struct PublicInputComparisonOutput {
+    planned_fields: usize,
+    exported_fields: usize,
+    matching_known_fields: usize,
+    mismatched_known_fields: Vec<PublicInputMismatchOutput>,
+    unknown_plan_slots: usize,
+    extra_exported_slots: usize,
+}
+
+#[derive(Serialize)]
+struct PublicInputMismatchOutput {
+    index: usize,
+    name: String,
+    planned_value_hex: String,
+    exported_value_hex: String,
 }
 
 fn usage(program: &str) -> String {
@@ -381,18 +405,44 @@ fn main() -> ExitCode {
                         .collect(),
                 })
                 .map_err(|err| err.to_string());
+            let exported_wrap_public_input = request
+                .exported_wrap_public_input
+                .as_ref()
+                .map(|exported| exported.hex_fields.clone())
+                .ok_or_else(|| "bundle does not include wrap_public_input_fields".to_string());
+            let public_input_comparison =
+                match (&public_input_plan, &request.exported_wrap_public_input) {
+                    (Ok(plan), Some(exported)) => {
+                        Ok(compare_public_input_plan(plan, &exported.hex_fields))
+                    }
+                    (Err(err), _) => Err(err.clone()),
+                    (_, None) => Err("bundle does not include wrap_public_input_fields".into()),
+                };
 
             let (metadata_status, metadata, metadata_error) = match metadata {
                 Ok(metadata) => ("decoded", Some(metadata), None),
                 Err(err) => ("error", None, Some(err)),
             };
+            let (public_input_plan_status, public_input_plan, public_input_plan_error) =
+                match public_input_plan {
+                    Ok(plan) => ("decoded", Some(plan), None),
+                    Err(err) => ("error", None, Some(err)),
+                };
             let (
-                public_input_plan_status,
-                public_input_plan,
-                public_input_plan_error,
-            ) = match public_input_plan {
-                Ok(plan) => ("decoded", Some(plan), None),
-                Err(err) => ("error", None, Some(err)),
+                exported_wrap_public_input_status,
+                exported_wrap_public_input,
+                exported_wrap_public_input_error,
+            ) = match exported_wrap_public_input {
+                Ok(fields) => ("decoded", Some(fields), None),
+                Err(err) => ("missing", None, Some(err)),
+            };
+            let (
+                public_input_comparison_status,
+                public_input_comparison,
+                public_input_comparison_error,
+            ) = match public_input_comparison {
+                Ok(comparison) => ("decoded", Some(comparison), None),
+                Err(err) => ("not_available", None, Some(err)),
             };
 
             let (verification_status, verification, verification_error) = match verification {
@@ -415,6 +465,12 @@ fn main() -> ExitCode {
                 public_input_plan_status,
                 public_input_plan,
                 public_input_plan_error,
+                exported_wrap_public_input_status,
+                exported_wrap_public_input,
+                exported_wrap_public_input_error,
+                public_input_comparison_status,
+                public_input_comparison,
+                public_input_comparison_error,
                 verification_status,
                 verification,
                 verification_error,
@@ -447,4 +503,56 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+fn compare_public_input_plan(
+    plan: &PublicInputPlanOutput,
+    exported_hex_fields: &[String],
+) -> PublicInputComparisonOutput {
+    let mut matching_known_fields = 0usize;
+    let mut mismatched_known_fields = Vec::new();
+    let compare_len = plan.fields.len().min(exported_hex_fields.len());
+
+    for index in 0..compare_len {
+        let planned = &plan.fields[index];
+        let Some(planned_value_hex) = &planned.value_hex else {
+            continue;
+        };
+        let exported_value_hex = &exported_hex_fields[index];
+        if normalize_hex(planned_value_hex) == normalize_hex(exported_value_hex) {
+            matching_known_fields += 1;
+        } else {
+            mismatched_known_fields.push(PublicInputMismatchOutput {
+                index,
+                name: planned.name.clone(),
+                planned_value_hex: planned_value_hex.clone(),
+                exported_value_hex: exported_value_hex.clone(),
+            });
+        }
+    }
+
+    let unknown_plan_slots = plan
+        .fields
+        .iter()
+        .filter(|field| field.value_hex.is_none())
+        .count();
+
+    PublicInputComparisonOutput {
+        planned_fields: plan.fields.len(),
+        exported_fields: exported_hex_fields.len(),
+        matching_known_fields,
+        mismatched_known_fields,
+        unknown_plan_slots,
+        extra_exported_slots: exported_hex_fields.len().saturating_sub(plan.fields.len()),
+    }
+}
+
+fn normalize_hex(hex: &str) -> String {
+    let hex = hex.strip_prefix("0x").unwrap_or(hex);
+    let trimmed = hex.trim_start_matches('0');
+    if trimmed.is_empty() {
+        "0".into()
+    } else {
+        trimmed.to_ascii_uppercase()
+    }
 }

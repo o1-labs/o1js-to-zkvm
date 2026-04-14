@@ -154,7 +154,10 @@ fn build_wrap_public_input_plan(
     fields.push(known_field(
         branch_index,
         "branch_data",
-        field_to_hex(pack_branch_data(metadata.proofs_verified, metadata.domain_log2)?),
+        field_to_hex(pack_branch_data(
+            metadata.proofs_verified,
+            metadata.domain_log2,
+        )?),
         "branch_data packed as 4 * domain_log2 + prefix-mask(proofs_verified)",
     ));
     fields.push(known_field(
@@ -187,8 +190,10 @@ fn decode_side_loaded_proof_metadata(
     let top = list_items(&sexp)?;
     let (statement, proof_or_wrapper) = split_statement_and_proof(top)?;
     let proof_state = with_context("proof_state", group_entries(statement, "proof_state"))?;
-    let deferred_values =
-        with_context("deferred_values", group_entries(proof_state, "deferred_values"))?;
+    let deferred_values = with_context(
+        "deferred_values",
+        group_entries(proof_state, "deferred_values"),
+    )?;
     let branch_data = with_context("branch_data", group_entries(deferred_values, "branch_data"))?;
     let plonk = with_context("plonk", group_entries(deferred_values, "plonk"))?;
     let wrap_messages = with_context(
@@ -211,8 +216,8 @@ fn decode_side_loaded_proof_metadata(
         "prev_evals.evals.evals",
         group_entries(prev_eval_wrapper, "evals"),
     )?;
-    let inner_proof =
-        with_context("inner_proof", group_entries(proof_or_wrapper, "proof")).unwrap_or(proof_or_wrapper);
+    let inner_proof = with_context("inner_proof", group_entries(proof_or_wrapper, "proof"))
+        .unwrap_or(proof_or_wrapper);
 
     Ok(SideLoadedProofMetadata {
         proofs_verified: with_context(
@@ -230,11 +235,17 @@ fn decode_side_loaded_proof_metadata(
         )?,
         sponge_digest_before_evaluations: with_context(
             "proof_state.sponge_digest_before_evaluations",
-            parse_atom_vector(binding_rest(proof_state, "sponge_digest_before_evaluations")?),
+            parse_atom_vector(binding_rest(
+                proof_state,
+                "sponge_digest_before_evaluations",
+            )?),
         )?,
         wrap_challenge_polynomial_commitment: with_context(
             "messages_for_next_wrap_proof.challenge_polynomial_commitment",
-            parse_point(binding_one(wrap_messages, "challenge_polynomial_commitment")?),
+            parse_point(binding_one(
+                wrap_messages,
+                "challenge_polynomial_commitment",
+            )?),
         )?,
         wrap_old_bulletproof_challenges: with_context(
             "messages_for_next_wrap_proof.old_bulletproof_challenges",
@@ -242,11 +253,17 @@ fn decode_side_loaded_proof_metadata(
         )?,
         next_step_challenge_polynomial_commitments: with_context(
             "messages_for_next_step_proof.challenge_polynomial_commitments",
-            parse_point_vector(binding_rest(next_step_messages, "challenge_polynomial_commitments")?),
+            parse_point_vector(binding_rest(
+                next_step_messages,
+                "challenge_polynomial_commitments",
+            )?),
         )?,
         next_step_old_bulletproof_challenges: with_context(
             "messages_for_next_step_proof.old_bulletproof_challenges",
-            parse_prechallenge_groups(binding_rest(next_step_messages, "old_bulletproof_challenges")?),
+            parse_prechallenge_groups(binding_rest(
+                next_step_messages,
+                "old_bulletproof_challenges",
+            )?),
         )?,
         prev_evals_public_input: with_context(
             "prev_evals.evals.public_input",
@@ -256,7 +273,10 @@ fn decode_side_loaded_proof_metadata(
             "prev_evals.evals.evals",
             parse_named_section_counts(prev_eval_sections),
         )?,
-        ft_eval1: with_context("prev_evals.ft_eval1", atom_owned(binding_one(prev_evals, "ft_eval1")?))?,
+        ft_eval1: with_context(
+            "prev_evals.ft_eval1",
+            atom_owned(binding_one(prev_evals, "ft_eval1")?),
+        )?,
         inner_proof: with_context("inner_proof", parse_inner_proof(inner_proof))?,
     })
 }
@@ -419,7 +439,10 @@ fn split_statement_and_proof<'a>(
     }
 
     if binding_optional_rest(top, "statement").is_some() {
-        return Ok((group_entries(top, "statement")?, group_entries(top, "proof")?));
+        return Ok((
+            group_entries(top, "statement")?,
+            group_entries(top, "proof")?,
+        ));
     }
 
     Err(PicklesError::InvalidSexp(format!(
@@ -429,12 +452,17 @@ fn split_statement_and_proof<'a>(
 }
 
 #[cfg(feature = "std")]
-fn with_context<T>(label: &'static str, result: Result<T, PicklesError>) -> Result<T, PicklesError> {
+fn with_context<T>(
+    label: &'static str,
+    result: Result<T, PicklesError>,
+) -> Result<T, PicklesError> {
     result.map_err(|err| match err {
-        PicklesError::InvalidSexp(message) => PicklesError::InvalidSexp(format!("{label}: {message}")),
-        PicklesError::MissingProofField(field) => PicklesError::InvalidSexp(format!(
-            "{label}: missing proof field: {field}"
-        )),
+        PicklesError::InvalidSexp(message) => {
+            PicklesError::InvalidSexp(format!("{label}: {message}"))
+        }
+        PicklesError::MissingProofField(field) => {
+            PicklesError::InvalidSexp(format!("{label}: missing proof field: {field}"))
+        }
         other => other,
     })
 }
@@ -586,10 +614,14 @@ fn parse_pchallenge(sexp: &sexp::Sexp) -> Result<BulletproofChallengeHex, Pickle
 }
 
 #[cfg(feature = "std")]
-fn parse_prechallenge_group(items: &[sexp::Sexp]) -> Result<Vec<BulletproofChallengeHex>, PicklesError> {
+fn parse_prechallenge_group(
+    items: &[sexp::Sexp],
+) -> Result<Vec<BulletproofChallengeHex>, PicklesError> {
     let items = if items.len() == 1 {
         match peel_singletons(&items[0]) {
-            sexp::Sexp::List(inner) if inner.iter().all(|item| parse_pchallenge(item).is_ok()) => inner,
+            sexp::Sexp::List(inner) if inner.iter().all(|item| parse_pchallenge(item).is_ok()) => {
+                inner
+            }
             _ => items,
         }
     } else {
@@ -615,7 +647,8 @@ fn parse_prechallenge_groups(
         return parse_prechallenge_groups(list_items(&items[0])?);
     }
 
-    items.iter()
+    items
+        .iter()
         .map(|item| parse_prechallenge_group(list_items(item)?))
         .collect()
 }
@@ -650,8 +683,14 @@ fn parse_feature_flags(entries: &[sexp::Sexp]) -> Result<PlonkFeatureFlags, Pick
             "feature_flags.foreign_field_mul",
             parse_bool_atom(binding_one(entries, "foreign_field_mul")?),
         )?,
-        xor: with_context("feature_flags.xor", parse_bool_atom(binding_one(entries, "xor")?))?,
-        rot: with_context("feature_flags.rot", parse_bool_atom(binding_one(entries, "rot")?))?,
+        xor: with_context(
+            "feature_flags.xor",
+            parse_bool_atom(binding_one(entries, "xor")?),
+        )?,
+        rot: with_context(
+            "feature_flags.rot",
+            parse_bool_atom(binding_one(entries, "rot")?),
+        )?,
         lookup: with_context(
             "feature_flags.lookup",
             parse_bool_atom(binding_one(entries, "lookup")?),
@@ -667,16 +706,28 @@ fn parse_feature_flags(entries: &[sexp::Sexp]) -> Result<PlonkFeatureFlags, Pick
 fn parse_plonk(entries: &[sexp::Sexp]) -> Result<PlonkDeferredValuesHex, PicklesError> {
     let feature_flags = with_context("feature_flags", group_entries(entries, "feature_flags"))?;
     Ok(PlonkDeferredValuesHex {
-        alpha_inner: with_context("plonk.alpha", parse_inner_hex(binding_one(entries, "alpha")?))?,
-        beta: with_context("plonk.beta", parse_atom_vector(binding_rest(entries, "beta")?))?,
-        gamma: with_context("plonk.gamma", parse_atom_vector(binding_rest(entries, "gamma")?))?,
+        alpha_inner: with_context(
+            "plonk.alpha",
+            parse_inner_hex(binding_one(entries, "alpha")?),
+        )?,
+        beta: with_context(
+            "plonk.beta",
+            parse_atom_vector(binding_rest(entries, "beta")?),
+        )?,
+        gamma: with_context(
+            "plonk.gamma",
+            parse_atom_vector(binding_rest(entries, "gamma")?),
+        )?,
         zeta_inner: with_context("plonk.zeta", parse_inner_hex(binding_one(entries, "zeta")?))?,
         joint_combiner_inner: match binding_optional_rest(entries, "joint_combiner") {
             Some(rest)
                 if !rest.is_empty()
                     && !matches!(peel_singletons(&rest[0]), sexp::Sexp::List(inner) if inner.is_empty()) =>
             {
-                Some(with_context("plonk.joint_combiner", parse_inner_hex(&rest[0]))?)
+                Some(with_context(
+                    "plonk.joint_combiner",
+                    parse_inner_hex(&rest[0]),
+                )?)
             }
             _ => None,
         },
@@ -701,7 +752,9 @@ fn payload_summary_count(rest: &[sexp::Sexp]) -> usize {
 }
 
 #[cfg(feature = "std")]
-fn parse_named_section_counts(entries: &[sexp::Sexp]) -> Result<Vec<NamedSectionCount>, PicklesError> {
+fn parse_named_section_counts(
+    entries: &[sexp::Sexp],
+) -> Result<Vec<NamedSectionCount>, PicklesError> {
     entries
         .iter()
         .map(|entry| {
@@ -769,7 +822,9 @@ fn parse_point_pair(sexp: &sexp::Sexp) -> Result<CurvePointPairHex, PicklesError
 fn parse_point_pair_vector(items: &[sexp::Sexp]) -> Result<Vec<CurvePointPairHex>, PicklesError> {
     let items = if items.len() == 1 {
         match peel_singletons(&items[0]) {
-            sexp::Sexp::List(inner) if inner.iter().all(|item| parse_point_pair(item).is_ok()) => inner,
+            sexp::Sexp::List(inner) if inner.iter().all(|item| parse_point_pair(item).is_ok()) => {
+                inner
+            }
             _ => items,
         }
     } else {
@@ -780,11 +835,10 @@ fn parse_point_pair_vector(items: &[sexp::Sexp]) -> Result<Vec<CurvePointPairHex
 }
 
 #[cfg(feature = "std")]
-fn parse_named_point_sections(entries: &[sexp::Sexp]) -> Result<Vec<NamedPointSectionHex>, PicklesError> {
-    entries
-        .iter()
-        .map(parse_named_point_section)
-        .collect()
+fn parse_named_point_sections(
+    entries: &[sexp::Sexp],
+) -> Result<Vec<NamedPointSectionHex>, PicklesError> {
+    entries.iter().map(parse_named_point_section).collect()
 }
 
 #[cfg(feature = "std")]
@@ -839,7 +893,12 @@ fn missing_field(index: usize, name: &str, source: &str) -> WrapPublicInputField
 }
 
 #[cfg(feature = "std")]
-fn known_field(index: usize, name: &str, value_hex: String, source: &str) -> WrapPublicInputFieldPlan {
+fn known_field(
+    index: usize,
+    name: &str,
+    value_hex: String,
+    source: &str,
+) -> WrapPublicInputFieldPlan {
     WrapPublicInputFieldPlan {
         index,
         name: name.into(),
@@ -886,11 +945,15 @@ fn pack_branch_data(proofs_verified: u8, domain_log2: u8) -> Result<Fp, PicklesE
         }
     };
 
-    Ok(Fp::from(4u64 * u64::from(domain_log2) + proofs_verified_mask))
+    Ok(Fp::from(
+        4u64 * u64::from(domain_log2) + proofs_verified_mask,
+    ))
 }
 
 #[cfg(feature = "std")]
-fn pack_optional_joint_combiner(joint_combiner_inner: &Option<Vec<String>>) -> Result<String, PicklesError> {
+fn pack_optional_joint_combiner(
+    joint_combiner_inner: &Option<Vec<String>>,
+) -> Result<String, PicklesError> {
     match joint_combiner_inner {
         Some(limbs) => pack_hex64_limbs_to_field_hex(limbs),
         None => Ok(field_to_hex(Fp::from(0u64))),

@@ -7,13 +7,14 @@
 
 use std::str::FromStr;
 
+use ark_ff::PrimeField;
 use mina_curves::pasta::Fp;
 use serde::Deserialize;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
-    PicklesVerifyRequest, SideLoadedProofBytes, SideLoadedVkBytes, SimpleChainFixture,
-    SimpleChainFixtureBundle, SimpleChainStatement,
+    ExportedWrapPublicInput, PicklesVerifyRequest, SideLoadedProofBytes, SideLoadedVkBytes,
+    SimpleChainFixture, SimpleChainFixtureBundle, SimpleChainStatement,
 };
 
 #[derive(Deserialize)]
@@ -41,13 +42,17 @@ struct RawRustFixture {
 #[derive(Deserialize)]
 struct RawRustInputs {
     statement_field_strings: Vec<String>,
+    #[serde(default)]
+    wrap_public_input_fields: Option<Vec<String>>,
     side_loaded_proof_base64: String,
 }
 
 fn parse_field_strings(fields: &[String]) -> Result<Vec<Fp>, PicklesError> {
     fields
         .iter()
-        .map(|field| Fp::from_str(field).map_err(|_| PicklesError::InvalidFieldElement(field.clone())))
+        .map(|field| {
+            Fp::from_str(field).map_err(|_| PicklesError::InvalidFieldElement(field.clone()))
+        })
         .collect()
 }
 
@@ -55,8 +60,36 @@ fn decode_base64(field_name: &'static str, value: &str) -> Result<Vec<u8>, Pickl
     base64::decode(value).map_err(|_| PicklesError::InvalidBase64(field_name))
 }
 
+fn parse_hex_field(hex: &str) -> Result<Fp, PicklesError> {
+    let hex = hex.strip_prefix("0x").unwrap_or(hex);
+    if hex.is_empty() {
+        return Ok(Fp::from(0u64));
+    }
+    let hex = if hex.len() % 2 == 0 {
+        hex.to_owned()
+    } else {
+        format!("0{hex}")
+    };
+
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
+            PicklesError::InvalidFieldElement(format!("invalid canonical hex field: 0x{hex}"))
+        })?;
+
+    Ok(Fp::from_be_bytes_mod_order(&bytes))
+}
+
+fn parse_hex_field_strings(fields: &[String]) -> Result<Vec<Fp>, PicklesError> {
+    fields.iter().map(|field| parse_hex_field(field)).collect()
+}
+
 /// Parse a Mina-exported `Simple_chain` fixture bundle into typed Rust data.
-pub fn parse_simple_chain_bundle(bundle_json: &str) -> Result<SimpleChainFixtureBundle, PicklesError> {
+pub fn parse_simple_chain_bundle(
+    bundle_json: &str,
+) -> Result<SimpleChainFixtureBundle, PicklesError> {
     let raw: RawSimpleChainBundle = serde_json::from_str(bundle_json)
         .map_err(|err| PicklesError::InvalidJson(err.to_string()))?;
 
@@ -78,17 +111,27 @@ pub fn parse_simple_chain_bundle(bundle_json: &str) -> Result<SimpleChainFixture
         .fixtures
         .into_iter()
         .map(|fixture| {
-            let statement_fields = parse_field_strings(&fixture.rust_inputs.statement_field_strings)?;
+            let statement_fields =
+                parse_field_strings(&fixture.rust_inputs.statement_field_strings)?;
             let statement = SimpleChainStatement::from_fields(&statement_fields)?;
             let proof = SideLoadedProofBytes(decode_base64(
                 "side_loaded_proof_base64",
                 &fixture.rust_inputs.side_loaded_proof_base64,
             )?);
+            let exported_wrap_public_input = fixture
+                .rust_inputs
+                .wrap_public_input_fields
+                .map(|hex_fields| {
+                    let fields = parse_hex_field_strings(&hex_fields)?;
+                    Ok(ExportedWrapPublicInput { hex_fields, fields })
+                })
+                .transpose()?;
 
             Ok(SimpleChainFixture {
                 name: fixture.name,
                 statement,
                 proof,
+                exported_wrap_public_input,
             })
         })
         .collect::<Result<Vec<_>, PicklesError>>()?;

@@ -154,6 +154,13 @@ pub struct WrapPublicInputPlan {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Exact wrap public-input vector exported by Mina as canonical field hex strings.
+pub struct ExportedWrapPublicInput {
+    pub hex_fields: Vec<String>,
+    pub fields: Vec<Fp>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 /// The current Rust model of the `Simple_chain` application statement.
 pub struct SimpleChainStatement {
     pub value: Fp,
@@ -184,6 +191,7 @@ pub struct SimpleChainFixture {
     pub name: String,
     pub statement: SimpleChainStatement,
     pub proof: SideLoadedProofBytes,
+    pub exported_wrap_public_input: Option<ExportedWrapPublicInput>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -209,6 +217,7 @@ impl SimpleChainFixtureBundle {
             vk: self.verification_key.clone(),
             proof: fixture.proof.clone(),
             statement: fixture.statement.clone(),
+            exported_wrap_public_input: fixture.exported_wrap_public_input.clone(),
         })
     }
 }
@@ -219,4 +228,5 @@ pub struct PicklesVerifyRequest {
     pub vk: SideLoadedVkBytes,
     pub proof: SideLoadedProofBytes,
     pub statement: SimpleChainStatement,
+    pub exported_wrap_public_input: Option<ExportedWrapPublicInput>,
 }
