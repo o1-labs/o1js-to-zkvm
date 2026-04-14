@@ -127,7 +127,25 @@ fn test_lower_simple_chain_public_input_plan() {
     assert_eq!(plan.fields[0].name, "combined_inner_product");
     assert_eq!(plan.fields[0].value_hex, None);
     assert_eq!(plan.fields[1].name, "b");
-    assert_eq!(plan.fields[1].value_hex, None);
+    assert_eq!(
+        plan.fields[1].value_hex.as_deref(),
+        Some("0x0A54D28ACA8A5C399ED00F2F91FBE927D3FDF45C16413B552639661F2F324904")
+    );
+    assert_eq!(plan.fields[2].name, "zeta_to_srs_length");
+    assert_eq!(
+        plan.fields[2].value_hex.as_deref(),
+        Some("0x22015ECB5A887BE29170996D9227C467CF368FF0A7553E63F2736C24A69B06AE")
+    );
+    assert_eq!(plan.fields[3].name, "zeta_to_domain_size");
+    assert_eq!(
+        plan.fields[3].value_hex.as_deref(),
+        Some("0x1E5A3297663A1A4ED49FBA6BB005301E3E47DF07C028D287AD0C9FECE290724E")
+    );
+    assert_eq!(plan.fields[4].name, "perm");
+    assert_eq!(
+        plan.fields[4].value_hex.as_deref(),
+        Some("0x3C458F2E70C47E6E1A5EA4C665A32DCE55EA861EC9434E414E2468B446FB2FC6")
+    );
     assert_eq!(plan.fields[5].name, "beta");
     assert_eq!(
         plan.fields[5].value_hex.as_deref(),

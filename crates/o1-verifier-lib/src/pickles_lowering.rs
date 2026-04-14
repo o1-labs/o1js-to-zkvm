@@ -13,7 +13,9 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use ark_ff::{Field, PrimeField};
 use kimchi::curve::KimchiCurve;
+use kimchi::circuits::domains::EvaluationDomains;
 use kimchi::plonk_sponge::FrSponge;
 use mina_curves::pasta::{Fp, Fq, Pallas};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
@@ -80,27 +82,31 @@ fn build_wrap_public_input_plan(
     fields.push(missing_field(
         0,
         "combined_inner_product",
-        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+        "current Rust derivation still disagrees with Mina's oracle; ft_eval0 / combined evaluation lowering is not trustworthy yet",
     ));
-    fields.push(missing_field(
+    fields.push(known_field(
         1,
         "b",
-        "current Rust derivation still disagrees with Mina's oracle; deferred IPA challenge polynomial lowering is not trustworthy yet",
+        derived.b_hex.clone(),
+        "new bulletproof challenge polynomial evaluated at zeta and zeta*omega with transcript-derived r",
     ));
-    fields.push(missing_field(
+    fields.push(known_field(
         2,
         "zeta_to_srs_length",
-        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+        derived.zeta_to_srs_length_hex.clone(),
+        "scalar-challenge zeta raised to Mina's step SRS length (2^16)",
     ));
-    fields.push(missing_field(
+    fields.push(known_field(
         3,
         "zeta_to_domain_size",
-        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+        derived.zeta_to_domain_size_hex.clone(),
+        "scalar-challenge zeta raised to the current step domain size",
     ));
-    fields.push(missing_field(
+    fields.push(known_field(
         4,
         "perm",
-        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+        derived.perm_hex.clone(),
+        "permutation scalar from Mina Plonk_checks.Type1.derive_plonk for the no-lookup Simple_chain case",
     ));
     fields.push(known_field(
         5,
@@ -206,6 +212,10 @@ fn build_wrap_public_input_plan(
 #[cfg(feature = "std")]
 struct DerivedWrapDeferredInputs {
     xi_packed: Fp,
+    b_hex: String,
+    perm_hex: String,
+    zeta_to_domain_size_hex: String,
+    zeta_to_srs_length_hex: String,
     messages_for_next_wrap_proof_digest_hex: String,
 }
 
@@ -213,19 +223,37 @@ struct DerivedWrapDeferredInputs {
 fn derive_wrap_deferred_inputs(
     metadata: &SideLoadedProofMetadata,
 ) -> Result<DerivedWrapDeferredInputs, PicklesError> {
-    let xi_challenge = derive_xi_challenge(metadata)?;
+    let (xi_challenge, r_challenge) = derive_transcript_challenges(metadata)?;
     let xi_packed = xi_challenge.inner();
+    let r = r_challenge.to_field(vesta_scalar_endo());
+    let b_hex = derive_b_value_hex(metadata, r)?;
+    let zeta = scalar_challenge_field_from_limbs(&metadata.plonk.zeta_inner)?;
+    let alpha = scalar_challenge_field_from_limbs(&metadata.plonk.alpha_inner)?;
+    let beta = pack_hex64_limbs_to_field(&metadata.plonk.beta)?;
+    let gamma = pack_hex64_limbs_to_field(&metadata.plonk.gamma)?;
+    let domain = EvaluationDomains::<Fp>::create(1usize << usize::from(metadata.domain_log2))
+        .map_err(|err| PicklesError::InvalidSexp(format!("invalid step domain: {err}")))?;
 
     Ok(DerivedWrapDeferredInputs {
         xi_packed,
+        b_hex,
+        perm_hex: derive_perm_hex(metadata, alpha, beta, gamma, zeta, domain.d1.group_gen)?,
+        zeta_to_domain_size_hex: field_to_hex(type1_shifted_value_from_field(pow_2pow(
+            zeta,
+            u32::from(metadata.domain_log2),
+        ))),
+        zeta_to_srs_length_hex: field_to_hex(type1_shifted_value_from_field(pow_2pow(
+            zeta,
+            STEP_SRS_LOG2,
+        ))),
         messages_for_next_wrap_proof_digest_hex: hash_messages_for_next_wrap_proof(metadata)?,
     })
 }
 
 #[cfg(feature = "std")]
-fn derive_xi_challenge(
+fn derive_transcript_challenges(
     metadata: &SideLoadedProofMetadata,
-) -> Result<ScalarChallenge<Fp>, PicklesError> {
+) -> Result<(ScalarChallenge<Fp>, ScalarChallenge<Fp>), PicklesError> {
     let mut sponge: ScalarSponge = ScalarSponge::from(fp_kimchi::static_params());
     sponge.absorb(&pack_hex64_limbs_to_field(
         &metadata.sponge_digest_before_evaluations,
@@ -253,7 +281,166 @@ fn derive_xi_challenge(
         }
     }
 
-    Ok(sponge.challenge())
+    let xi = sponge.challenge();
+    let r = sponge.challenge();
+    Ok((xi, r))
+}
+
+#[cfg(feature = "std")]
+fn derive_b_value_hex(
+    metadata: &SideLoadedProofMetadata,
+    r: Fp,
+) -> Result<String, PicklesError> {
+    let zeta = scalar_challenge_field_from_limbs(&metadata.plonk.zeta_inner)?;
+    let domain = EvaluationDomains::<Fp>::create(1usize << usize::from(metadata.domain_log2))
+        .map_err(|err| PicklesError::InvalidSexp(format!("invalid step domain: {err}")))?;
+    let zetaw = zeta * domain.d1.group_gen;
+    let challenges = metadata
+        .deferred_bulletproof_challenges
+        .iter()
+        .map(step_bulletproof_challenge_to_field)
+        .collect::<Result<Vec<_>, _>>()?;
+    let challenge_polynomial = |point: Fp| evaluate_challenge_polynomial(&challenges, point);
+    let b_actual = challenge_polynomial(zeta) + (r * challenge_polynomial(zetaw));
+
+    Ok(field_to_hex(type1_shifted_value_from_field(b_actual)))
+}
+
+#[cfg(feature = "std")]
+const STEP_SRS_LOG2: u32 = 16;
+
+#[cfg(feature = "std")]
+const PERM_ALPHA0: usize = 21;
+
+#[cfg(feature = "std")]
+fn derive_perm_hex(
+    metadata: &SideLoadedProofMetadata,
+    alpha: Fp,
+    beta: Fp,
+    gamma: Fp,
+    zeta: Fp,
+    omega: Fp,
+) -> Result<String, PicklesError> {
+    let z_section = prev_eval_section(metadata, "z")?;
+    let s_section = prev_eval_section(metadata, "s")?;
+    let w_section = prev_eval_section(metadata, "w")?;
+    let z_next = parse_hex_field(
+        z_section
+            .evaluations
+            .first()
+            .and_then(|pair| pair.zeta_omega.first())
+            .ok_or_else(|| PicklesError::InvalidSexp("prev_evals.z missing zeta_omega".into()))?,
+    )?;
+    let witness_curr = w_section
+        .evaluations
+        .iter()
+        .map(|pair| {
+            parse_hex_field(pair.zeta.first().ok_or_else(|| {
+                PicklesError::InvalidSexp("prev_evals.w entry missing zeta evaluation".into())
+            })?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let sigma_curr = s_section
+        .evaluations
+        .iter()
+        .map(|pair| {
+            parse_hex_field(pair.zeta.first().ok_or_else(|| {
+                PicklesError::InvalidSexp("prev_evals.s entry missing zeta evaluation".into())
+            })?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let alpha_pow_perm = pow_field(alpha, PERM_ALPHA0);
+    let zkp = zk_polynomial(zeta, omega);
+    let init = (z_next * beta) * alpha_pow_perm * zkp;
+    let product = sigma_curr
+        .iter()
+        .zip(witness_curr.iter())
+        .fold(init, |acc, (s, w)| acc * (gamma + (beta * *s) + *w));
+
+    Ok(field_to_hex(type1_shifted_value_from_field(-product)))
+}
+
+fn zk_polynomial(zeta: Fp, omega: Fp) -> Fp {
+    let omega_inv = omega.inverse().expect("domain generator is non-zero");
+    let omega_inv_sq = omega_inv.square();
+    let omega_inv_cu = omega_inv_sq * omega_inv;
+    (zeta - omega_inv) * (zeta - omega_inv_sq) * (zeta - omega_inv_cu)
+}
+
+#[cfg(feature = "std")]
+fn prev_eval_section<'a>(
+    metadata: &'a SideLoadedProofMetadata,
+    name: &str,
+) -> Result<&'a NamedFieldEvalSectionHex, PicklesError> {
+    metadata
+        .prev_evals
+        .iter()
+        .find(|section| section.name == name)
+        .ok_or_else(|| PicklesError::InvalidSexp(format!("missing prev_evals section: {name}")))
+}
+
+#[cfg(feature = "std")]
+fn pow_field(value: Fp, exponent: usize) -> Fp {
+    let mut acc = Fp::from(1u64);
+    for _ in 0..exponent {
+        acc *= value;
+    }
+    acc
+}
+
+#[cfg(feature = "std")]
+fn pow_2pow(mut value: Fp, squarings: u32) -> Fp {
+    for _ in 0..squarings {
+        value = value.square();
+    }
+    value
+}
+
+#[cfg(feature = "std")]
+fn evaluate_challenge_polynomial(challenges: &[Fp], point: Fp) -> Fp {
+    if challenges.is_empty() {
+        return Fp::from(1u64);
+    }
+
+    let mut pow_two_pows = Vec::with_capacity(challenges.len());
+    let mut acc = point;
+    pow_two_pows.push(acc);
+    for _ in 1..challenges.len() {
+        acc = acc.square();
+        pow_two_pows.push(acc);
+    }
+
+    challenges
+        .iter()
+        .enumerate()
+        .fold(Fp::from(1u64), |product, (i, challenge)| {
+            let power = pow_two_pows[challenges.len() - 1 - i];
+            product * (Fp::from(1u64) + (*challenge * power))
+        })
+}
+
+#[cfg(feature = "std")]
+fn scalar_challenge_field_from_limbs(limbs: &[String]) -> Result<Fp, PicklesError> {
+    let challenge = pack_hex64_limbs_to_field(limbs)?;
+    Ok(ScalarChallenge::new(challenge).to_field(vesta_scalar_endo()))
+}
+
+#[cfg(feature = "std")]
+fn type1_shifted_value_from_field(value: Fp) -> Fp {
+    let shift = type1_shift_constant();
+    let two_inverse = Fp::from(2u64)
+        .inverse()
+        .expect("two must be invertible in Pasta fields");
+    (value - shift) * two_inverse
+}
+
+#[cfg(feature = "std")]
+fn type1_shift_constant() -> Fp {
+    let mut shift = Fp::from(1u64);
+    for _ in 0..Fp::MODULUS_BIT_SIZE {
+        shift += shift;
+    }
+    shift + Fp::from(1u64)
 }
 
 #[cfg(feature = "std")]
