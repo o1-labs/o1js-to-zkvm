@@ -68,7 +68,7 @@ fn build_wrap_public_input_plan(
     metadata: &SideLoadedProofMetadata,
 ) -> Result<WrapPublicInputPlan, PicklesError> {
     let deferred_bulletproof_len = metadata.deferred_bulletproof_challenges.len();
-    let mut fields = Vec::with_capacity(14 + deferred_bulletproof_len);
+    let mut fields = Vec::with_capacity(24 + deferred_bulletproof_len);
 
     fields.push(missing_field(
         0,
@@ -158,21 +158,38 @@ fn build_wrap_public_input_plan(
             metadata.proofs_verified,
             metadata.domain_log2,
         )?),
-        "branch_data packed as 4 * domain_log2 + prefix-mask(proofs_verified)",
+        "branch_data packed as 4 * domain_log2 + wrap prefix-mask(proofs_verified)",
+    ));
+    let feature_flag_start = branch_index + 1;
+    for (offset, (name, enabled)) in wrap_feature_flag_slots(&metadata.plonk.feature_flags)
+        .into_iter()
+        .enumerate()
+    {
+        fields.push(known_field(
+            feature_flag_start + offset,
+            name,
+            bool_to_field_hex(enabled),
+            "feature flag slot from Wrap.Statement.In_circuit.spec",
+        ));
+    }
+    let lookup_opt_start = feature_flag_start + 8;
+    fields.push(known_field(
+        lookup_opt_start,
+        "joint_combiner.present",
+        bool_to_field_hex(metadata.plonk.joint_combiner_inner.is_some()),
+        "lookup opt flag from Wrap.Statement.In_circuit.spec",
     ));
     fields.push(known_field(
-        branch_index + 1,
-        "joint_combiner",
+        lookup_opt_start + 1,
+        "joint_combiner.value",
         pack_optional_joint_combiner(&metadata.plonk.joint_combiner_inner)?,
-        "lookup opt slot uses a constant-layout zero scalar challenge when lookups are disabled",
+        "lookup opt payload uses a zero scalar challenge when lookups are disabled",
     ));
 
     Ok(WrapPublicInputPlan {
         total_fields: fields.len(),
         exact_public_input_available: fields.iter().all(|field| field.value_hex.is_some()),
-        elided_constant_segments: vec![
-            "feature_flags: all disabled, so Mina packs them as zero-field constants".into(),
-        ],
+        elided_constant_segments: Vec::new(),
         fields,
     })
 }
@@ -507,10 +524,10 @@ fn parse_domain_log2(value: &str) -> Result<u8, PicklesError> {
     }
 
     if bytes.len() == 4 && bytes[0] == b'\\' && bytes[1..].iter().all(u8::is_ascii_digit) {
-        let octal = core::str::from_utf8(&bytes[1..]).map_err(|_| {
+        let decimal = core::str::from_utf8(&bytes[1..]).map_err(|_| {
             PicklesError::InvalidSexp(format!("invalid domain_log2 escape: {value:?}"))
         })?;
-        return u8::from_str_radix(octal, 8).map_err(|_| {
+        return decimal.parse::<u8>().map_err(|_| {
             PicklesError::InvalidSexp(format!("invalid domain_log2 escape: {value:?}"))
         });
     }
@@ -951,6 +968,26 @@ fn pack_branch_data(proofs_verified: u8, domain_log2: u8) -> Result<Fp, PicklesE
 }
 
 #[cfg(feature = "std")]
+fn wrap_feature_flag_slots(feature_flags: &PlonkFeatureFlags) -> [(&'static str, bool); 8] {
+    [
+        ("feature_flags.range_check0", feature_flags.range_check0),
+        ("feature_flags.range_check1", feature_flags.range_check1),
+        (
+            "feature_flags.foreign_field_add",
+            feature_flags.foreign_field_add,
+        ),
+        (
+            "feature_flags.foreign_field_mul",
+            feature_flags.foreign_field_mul,
+        ),
+        ("feature_flags.xor", feature_flags.xor),
+        ("feature_flags.rot", feature_flags.rot),
+        ("feature_flags.lookup", feature_flags.lookup),
+        ("feature_flags.runtime_tables", feature_flags.runtime_tables),
+    ]
+}
+
+#[cfg(feature = "std")]
 fn pack_optional_joint_combiner(
     joint_combiner_inner: &Option<Vec<String>>,
 ) -> Result<String, PicklesError> {
@@ -958,6 +995,11 @@ fn pack_optional_joint_combiner(
         Some(limbs) => pack_hex64_limbs_to_field_hex(limbs),
         None => Ok(field_to_hex(Fp::from(0u64))),
     }
+}
+
+#[cfg(feature = "std")]
+fn bool_to_field_hex(value: bool) -> String {
+    field_to_hex(Fp::from(u64::from(value)))
 }
 
 #[cfg(feature = "std")]

@@ -44,7 +44,7 @@ fn test_lower_simple_chain_metadata() {
     let lowered = lower_simple_chain_metadata(&request).expect("metadata should decode");
 
     assert_eq!(lowered.proofs_verified, 1);
-    assert_eq!(lowered.domain_log2, 12);
+    assert_eq!(lowered.domain_log2, 14);
     assert_eq!(
         lowered.plonk.alpha_inner,
         vec!["8f2d11c04a54a4fd", "8606c33dbba5d84c"]
@@ -110,9 +110,9 @@ fn test_lower_simple_chain_public_input_plan() {
 
     let plan = lower_simple_chain_public_input_plan(&request).expect("public-input plan");
 
-    assert_eq!(plan.total_fields, 31);
+    assert_eq!(plan.total_fields, 40);
     assert!(!plan.exact_public_input_available);
-    assert_eq!(plan.fields.len(), 31);
+    assert_eq!(plan.fields.len(), 40);
     assert_eq!(plan.fields[0].name, "combined_inner_product");
     assert_eq!(plan.fields[0].value_hex, None);
     assert_eq!(plan.fields[5].name, "beta");
@@ -157,9 +157,27 @@ fn test_lower_simple_chain_public_input_plan() {
         Some("0xD414D3811880F6FACA619656C6668715")
     );
     assert_eq!(plan.fields[29].name, "branch_data");
-    assert_eq!(plan.fields[29].value_hex.as_deref(), Some("0x32"));
-    assert_eq!(plan.fields[30].name, "joint_combiner");
+    assert_eq!(plan.fields[29].value_hex.as_deref(), Some("0x3A"));
+    assert_eq!(plan.fields[30].name, "feature_flags.range_check0");
     assert_eq!(plan.fields[30].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[31].name, "feature_flags.range_check1");
+    assert_eq!(plan.fields[31].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[32].name, "feature_flags.foreign_field_add");
+    assert_eq!(plan.fields[32].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[33].name, "feature_flags.foreign_field_mul");
+    assert_eq!(plan.fields[33].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[34].name, "feature_flags.xor");
+    assert_eq!(plan.fields[34].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[35].name, "feature_flags.rot");
+    assert_eq!(plan.fields[35].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[36].name, "feature_flags.lookup");
+    assert_eq!(plan.fields[36].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[37].name, "feature_flags.runtime_tables");
+    assert_eq!(plan.fields[37].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[38].name, "joint_combiner.present");
+    assert_eq!(plan.fields[38].value_hex.as_deref(), Some("0x0"));
+    assert_eq!(plan.fields[39].name, "joint_combiner.value");
+    assert_eq!(plan.fields[39].value_hex.as_deref(), Some("0x0"));
 }
 
 #[test]
