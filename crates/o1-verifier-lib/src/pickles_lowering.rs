@@ -13,16 +13,22 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use mina_curves::pasta::Fp;
+use kimchi::curve::KimchiCurve;
+use kimchi::plonk_sponge::FrSponge;
+use mina_curves::pasta::{Fp, Fq, Pallas};
+use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
+use mina_poseidon::pasta::{fp_kimchi, fq_kimchi, FULL_ROUNDS};
+use mina_poseidon::poseidon::{ArithmeticSponge, Sponge};
+use mina_poseidon::sponge::ScalarChallenge;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
-    BulletproofChallengeHex, CurvePointHex, CurvePointPairHex, NamedPointSectionHex,
-    NamedSectionCount, PicklesVerifyRequest, PlonkDeferredValuesHex, PlonkFeatureFlags,
-    SideLoadedProofMetadata, WrapBulletproofHex, WrapProofBodyHex, WrapProofCommitmentsHex,
-    WrapPublicInputFieldPlan, WrapPublicInputPlan,
+    BulletproofChallengeHex, CurvePointHex, CurvePointPairHex, FieldEvalPairHex,
+    NamedFieldEvalSectionHex, NamedPointSectionHex, NamedSectionCount, PicklesVerifyRequest,
+    PlonkDeferredValuesHex, PlonkFeatureFlags, SideLoadedProofMetadata, WrapBulletproofHex,
+    WrapProofBodyHex, WrapProofCommitmentsHex, WrapPublicInputFieldPlan, WrapPublicInputPlan,
 };
-use crate::{VestaProof, VestaVerifierIndex};
+use crate::{ScalarSponge, Vesta, VestaProof, VestaVerifierIndex};
 
 pub struct LoweredWrapInstance {
     pub verifier_index: VestaVerifierIndex,
@@ -67,6 +73,7 @@ pub fn lower_simple_chain_public_input_plan(
 fn build_wrap_public_input_plan(
     metadata: &SideLoadedProofMetadata,
 ) -> Result<WrapPublicInputPlan, PicklesError> {
+    let derived = derive_wrap_deferred_inputs(metadata)?;
     let deferred_bulletproof_len = metadata.deferred_bulletproof_challenges.len();
     let mut fields = Vec::with_capacity(24 + deferred_bulletproof_len);
 
@@ -78,7 +85,7 @@ fn build_wrap_public_input_plan(
     fields.push(missing_field(
         1,
         "b",
-        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+        "current Rust derivation still disagrees with Mina's oracle; deferred IPA challenge polynomial lowering is not trustworthy yet",
     ));
     fields.push(missing_field(
         2,
@@ -119,10 +126,11 @@ fn build_wrap_public_input_plan(
         pack_hex64_limbs_to_field_hex(&metadata.plonk.zeta_inner)?,
         "deferred_values.plonk.zeta packed with Mina Challenge.typ via scalar_challenge",
     ));
-    fields.push(missing_field(
+    fields.push(known_field(
         9,
         "xi",
-        "not serialized in Mina side-loaded proof; produced by deferred wrap verification",
+        field_to_hex(derived.xi_packed),
+        "challenge squeezed from the deferred wrap transcript and packed with Mina Challenge.typ",
     ));
     fields.push(known_field(
         10,
@@ -130,15 +138,16 @@ fn build_wrap_public_input_plan(
         pack_hex64_limbs_to_field_hex(&metadata.sponge_digest_before_evaluations)?,
         "proof_state.sponge_digest_before_evaluations packed with Mina Digest.typ",
     ));
-    fields.push(missing_field(
+    fields.push(known_field(
         11,
         "messages_for_next_wrap_proof",
-        "requires Mina Wrap_hack hash over prepared next-wrap messages",
+        derived.messages_for_next_wrap_proof_digest_hex.clone(),
+        "Poseidon digest of the prepared next-wrap message payload",
     ));
     fields.push(missing_field(
         12,
         "messages_for_next_step_proof",
-        "requires Mina hash over prepared next-step messages",
+        "requires Mina hash over prepared next-step messages including step verification-key commitments",
     ));
 
     for (offset, challenge) in metadata.deferred_bulletproof_challenges.iter().enumerate() {
@@ -195,6 +204,190 @@ fn build_wrap_public_input_plan(
 }
 
 #[cfg(feature = "std")]
+struct DerivedWrapDeferredInputs {
+    xi_packed: Fp,
+    messages_for_next_wrap_proof_digest_hex: String,
+}
+
+#[cfg(feature = "std")]
+fn derive_wrap_deferred_inputs(
+    metadata: &SideLoadedProofMetadata,
+) -> Result<DerivedWrapDeferredInputs, PicklesError> {
+    let xi_challenge = derive_xi_challenge(metadata)?;
+    let xi_packed = xi_challenge.inner();
+
+    Ok(DerivedWrapDeferredInputs {
+        xi_packed,
+        messages_for_next_wrap_proof_digest_hex: hash_messages_for_next_wrap_proof(metadata)?,
+    })
+}
+
+#[cfg(feature = "std")]
+fn derive_xi_challenge(
+    metadata: &SideLoadedProofMetadata,
+) -> Result<ScalarChallenge<Fp>, PicklesError> {
+    let mut sponge: ScalarSponge = ScalarSponge::from(fp_kimchi::static_params());
+    sponge.absorb(&pack_hex64_limbs_to_field(
+        &metadata.sponge_digest_before_evaluations,
+    )?);
+
+    let old_bulletproof_digest =
+        field_poseidon_digest(&flatten_old_step_bulletproof_challenges_for_digest(
+            &metadata.next_step_old_bulletproof_challenges,
+        )?)?;
+    sponge.absorb(&old_bulletproof_digest);
+    sponge.absorb(&parse_hex_field(&metadata.ft_eval1)?);
+
+    for field in &metadata.prev_evals_public_input {
+        sponge.absorb(&parse_hex_field(field)?);
+    }
+
+    for section in canonical_prev_eval_absorption_sections(metadata) {
+        for evaluation in &section.evaluations {
+            for field in &evaluation.zeta {
+                sponge.absorb(&parse_hex_field(field)?);
+            }
+            for field in &evaluation.zeta_omega {
+                sponge.absorb(&parse_hex_field(field)?);
+            }
+        }
+    }
+
+    Ok(sponge.challenge())
+}
+
+#[cfg(feature = "std")]
+fn hash_messages_for_next_wrap_proof(
+    metadata: &SideLoadedProofMetadata,
+) -> Result<String, PicklesError> {
+    let mut fields = flatten_wrap_bulletproof_challenges_for_digest(
+        &metadata.wrap_old_bulletproof_challenges,
+    )?;
+    fields.push(parse_hex_field_fq(
+        &metadata.wrap_challenge_polynomial_commitment.x,
+    )?);
+    fields.push(parse_hex_field_fq(
+        &metadata.wrap_challenge_polynomial_commitment.y,
+    )?);
+    Ok(field_to_hex_fq(field_poseidon_digest_fq(&fields)?))
+}
+
+#[cfg(feature = "std")]
+fn flatten_wrap_bulletproof_challenges_for_digest(
+    groups: &[Vec<BulletproofChallengeHex>],
+) -> Result<Vec<Fq>, PicklesError> {
+    let mut fields = Vec::new();
+    for group in groups {
+        for challenge in group {
+            fields.push(wrap_bulletproof_challenge_to_field(challenge)?);
+        }
+    }
+    Ok(fields)
+}
+
+#[cfg(feature = "std")]
+fn flatten_old_step_bulletproof_challenges_for_digest(
+    groups: &[Vec<BulletproofChallengeHex>],
+) -> Result<Vec<Fp>, PicklesError> {
+    let mut fields = Vec::new();
+    for group in groups {
+        for challenge in group {
+            fields.push(step_bulletproof_challenge_to_field(challenge)?);
+        }
+    }
+    Ok(fields)
+}
+
+#[cfg(feature = "std")]
+fn wrap_bulletproof_challenge_to_field(
+    challenge: &BulletproofChallengeHex,
+) -> Result<Fq, PicklesError> {
+    let challenge = pack_hex64_limbs_to_field_fq(&challenge.prechallenge_inner)?;
+    Ok(ScalarChallenge::new(challenge).to_field(pallas_scalar_endo()))
+}
+
+#[cfg(feature = "std")]
+fn step_bulletproof_challenge_to_field(
+    challenge: &BulletproofChallengeHex,
+) -> Result<Fp, PicklesError> {
+    let challenge = pack_hex64_limbs_to_field(&challenge.prechallenge_inner)?;
+    Ok(ScalarChallenge::new(challenge).to_field(vesta_scalar_endo()))
+}
+
+#[cfg(feature = "std")]
+fn field_poseidon_digest(fields: &[Fp]) -> Result<Fp, PicklesError> {
+    let mut sponge = ArithmeticSponge::<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>::new(
+        fp_kimchi::static_params(),
+    );
+    sponge.absorb(fields);
+    Ok(sponge.squeeze())
+}
+
+#[cfg(feature = "std")]
+fn field_poseidon_digest_fq(fields: &[Fq]) -> Result<Fq, PicklesError> {
+    let mut sponge = ArithmeticSponge::<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>::new(
+        fq_kimchi::static_params(),
+    );
+    sponge.absorb(fields);
+    Ok(sponge.squeeze())
+}
+
+#[cfg(feature = "std")]
+fn vesta_scalar_endo() -> &'static Fp {
+    let (_, endo) = Vesta::endos();
+    endo
+}
+
+#[cfg(feature = "std")]
+fn pallas_scalar_endo() -> &'static Fq {
+    let (_, endo) = Pallas::endos();
+    endo
+}
+
+#[cfg(feature = "std")]
+fn canonical_prev_eval_absorption_sections<'a>(
+    metadata: &'a SideLoadedProofMetadata,
+) -> Vec<&'a NamedFieldEvalSectionHex> {
+    const ABSORPTION_ORDER: &[&str] = &[
+        "z",
+        "generic_selector",
+        "poseidon_selector",
+        "complete_add_selector",
+        "mul_selector",
+        "emul_selector",
+        "endomul_scalar_selector",
+        "w",
+        "coefficients",
+        "s",
+        "range_check0_selector",
+        "range_check1_selector",
+        "foreign_field_add_selector",
+        "foreign_field_mul_selector",
+        "xor_selector",
+        "rot_selector",
+        "lookup_aggregation",
+        "lookup_table",
+        "lookup_sorted",
+        "runtime_lookup_table",
+        "runtime_lookup_table_selector",
+        "xor_lookup_selector",
+        "lookup_gate_lookup_selector",
+        "range_check_lookup_selector",
+        "foreign_field_mul_lookup_selector",
+    ];
+
+    ABSORPTION_ORDER
+        .iter()
+        .filter_map(|name| {
+            metadata
+                .prev_evals
+                .iter()
+                .find(|section| section.name == *name && !section.evaluations.is_empty())
+        })
+        .collect()
+}
+
+#[cfg(feature = "std")]
 fn decode_side_loaded_proof_metadata(
     proof_bytes: &[u8],
 ) -> Result<SideLoadedProofMetadata, PicklesError> {
@@ -231,7 +424,7 @@ fn decode_side_loaded_proof_metadata(
     let prev_eval_wrapper = with_context("prev_evals.evals", group_entries(prev_evals, "evals"))?;
     let prev_eval_sections = with_context(
         "prev_evals.evals.evals",
-        group_entries(prev_eval_wrapper, "evals"),
+        binding_payload_items(prev_eval_wrapper, "evals").and_then(normalize_section_entries),
     )?;
     let inner_proof = with_context("inner_proof", group_entries(proof_or_wrapper, "proof"))
         .unwrap_or(proof_or_wrapper);
@@ -286,8 +479,12 @@ fn decode_side_loaded_proof_metadata(
             "prev_evals.evals.public_input",
             parse_atom_vector(binding_rest(prev_eval_wrapper, "public_input")?),
         )?,
+        prev_evals: with_context(
+            "prev_evals.evals.evals.detail",
+            parse_named_field_eval_sections(prev_eval_sections),
+        )?,
         prev_evals_sections: with_context(
-            "prev_evals.evals.evals",
+            "prev_evals.evals.evals.counts",
             parse_named_section_counts(prev_eval_sections),
         )?,
         ft_eval1: with_context(
@@ -321,6 +518,18 @@ fn list_items(sexp: &sexp::Sexp) -> Result<&[sexp::Sexp], PicklesError> {
         _ => Err(PicklesError::InvalidSexp(
             "expected list at current node".to_string(),
         )),
+    }
+}
+
+#[cfg(feature = "std")]
+fn normalize_section_entries(entries: &[sexp::Sexp]) -> Result<&[sexp::Sexp], PicklesError> {
+    if entries.len() == 1 {
+        match peel_singletons(&entries[0]) {
+            sexp::Sexp::List(inner) => Ok(inner),
+            _ => Ok(entries),
+        }
+    } else {
+        Ok(entries)
     }
 }
 
@@ -419,6 +628,25 @@ fn binding_optional_rest<'a>(
     key: &'static str,
 ) -> Option<&'a [sexp::Sexp]> {
     binding_rest(entries, key).ok()
+}
+
+#[cfg(feature = "std")]
+fn binding_payload_items<'a>(
+    entries: &'a [sexp::Sexp],
+    key: &'static str,
+) -> Result<&'a [sexp::Sexp], PicklesError> {
+    if let Some(entry) = entries.iter().find(|entry| match peel_singletons(entry) {
+        sexp::Sexp::List(items) => matches!(items.first(), Some(first) if atom(first).ok() == Some(key)),
+        _ => false,
+    }) {
+        let items = list_items(entry)?;
+        return Ok(&items[1..]);
+    }
+
+    Err(PicklesError::InvalidSexp(format!(
+        "missing proof field: {key}; available keys: {}",
+        describe_entry_keys(entries)
+    )))
 }
 
 #[cfg(feature = "std")]
@@ -790,6 +1018,105 @@ fn parse_named_section_counts(
 }
 
 #[cfg(feature = "std")]
+fn parse_named_field_eval_sections(
+    entries: &[sexp::Sexp],
+) -> Result<Vec<NamedFieldEvalSectionHex>, PicklesError> {
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if atom(&entries[0]).is_ok() {
+        return Ok(vec![parse_named_field_eval_section_from_items(entries)?]);
+    }
+
+    let mut sections = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        sections.push(parse_named_field_eval_section(entry).map_err(|err| match err {
+            PicklesError::InvalidSexp(message) => PicklesError::InvalidSexp(format!(
+                "section[{index}]={} {message}",
+                entry
+            )),
+            other => other,
+        })?);
+    }
+    Ok(sections)
+}
+
+#[cfg(feature = "std")]
+fn parse_named_field_eval_section(
+    entry: &sexp::Sexp,
+) -> Result<NamedFieldEvalSectionHex, PicklesError> {
+    parse_named_field_eval_section_from_items(list_items(entry)?)
+}
+
+#[cfg(feature = "std")]
+fn parse_named_field_eval_section_from_items(
+    items: &[sexp::Sexp],
+) -> Result<NamedFieldEvalSectionHex, PicklesError> {
+    if items.is_empty() {
+        return Err(PicklesError::InvalidSexp(
+            "expected named field-eval section entry".to_string(),
+        ));
+    }
+
+    let payload_items = if items.len() == 2 {
+        match peel_singletons(&items[1]) {
+            sexp::Sexp::List(inner) => inner,
+            _ => &items[1..],
+        }
+    } else {
+        &items[1..]
+    };
+
+    let mut evaluations = Vec::new();
+    if payload_items.len() == 2
+        && parse_scalar_field_vector(&payload_items[0]).is_ok()
+        && parse_scalar_field_vector(&payload_items[1]).is_ok()
+    {
+        evaluations.push(FieldEvalPairHex {
+            zeta: parse_scalar_field_vector(&payload_items[0])?,
+            zeta_omega: parse_scalar_field_vector(&payload_items[1])?,
+        });
+    } else {
+        for payload in payload_items {
+            if matches!(peel_singletons(payload), sexp::Sexp::List(inner) if inner.is_empty()) {
+                continue;
+            }
+            evaluations.push(parse_field_eval_pair(payload)?);
+        }
+    }
+
+    Ok(NamedFieldEvalSectionHex {
+        name: atom_owned(&items[0])?,
+        evaluations,
+    })
+}
+
+#[cfg(feature = "std")]
+fn parse_field_eval_pair(entry: &sexp::Sexp) -> Result<FieldEvalPairHex, PicklesError> {
+    let items = list_items(entry)?;
+    if items.len() != 2 {
+        return Err(PicklesError::InvalidSexp(format!(
+            "expected evaluation pair with 2 entries, got {}",
+            items.len()
+        )));
+    }
+
+    Ok(FieldEvalPairHex {
+        zeta: parse_scalar_field_vector(&items[0])?,
+        zeta_omega: parse_scalar_field_vector(&items[1])?,
+    })
+}
+
+#[cfg(feature = "std")]
+fn parse_scalar_field_vector(entry: &sexp::Sexp) -> Result<Vec<String>, PicklesError> {
+    match peel_singletons(entry) {
+        sexp::Sexp::Atom(_) => Ok(vec![atom_owned(entry)?]),
+        sexp::Sexp::List(items) => items.iter().map(atom_owned).collect(),
+    }
+}
+
+#[cfg(feature = "std")]
 fn parse_inner_proof(entries: &[sexp::Sexp]) -> Result<WrapProofBodyHex, PicklesError> {
     let commitments = group_entries(entries, "commitments")?;
     let evaluations = group_entries(entries, "evaluations")?;
@@ -944,9 +1271,74 @@ fn pack_hex64_limbs_to_field(limbs: &[String]) -> Result<Fp, PicklesError> {
 }
 
 #[cfg(feature = "std")]
+fn pack_hex64_limbs_to_field_fq(limbs: &[String]) -> Result<Fq, PicklesError> {
+    use ark_ff::PrimeField;
+
+    let mut bytes = Vec::with_capacity(limbs.len() * 8);
+    for limb in limbs {
+        let limb = parse_hex64_limb(limb)?;
+        bytes.extend_from_slice(&limb.to_le_bytes());
+    }
+
+    Ok(Fq::from_le_bytes_mod_order(&bytes))
+}
+
+#[cfg(feature = "std")]
 fn parse_hex64_limb(limb: &str) -> Result<u64, PicklesError> {
     u64::from_str_radix(limb, 16)
         .map_err(|_| PicklesError::InvalidFieldElement(format!("invalid Hex64 limb: {limb}")))
+}
+
+#[cfg(feature = "std")]
+fn parse_hex_field(hex: &str) -> Result<Fp, PicklesError> {
+    use ark_ff::PrimeField;
+
+    let hex = hex.strip_prefix("0x").unwrap_or(hex);
+    if hex.is_empty() {
+        return Ok(Fp::from(0u64));
+    }
+
+    let normalized = if hex.len() % 2 == 0 {
+        hex.to_owned()
+    } else {
+        format!("0{hex}")
+    };
+
+    let bytes = (0..normalized.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&normalized[i..i + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
+            PicklesError::InvalidFieldElement(format!("invalid canonical hex field: 0x{normalized}"))
+        })?;
+
+    Ok(Fp::from_be_bytes_mod_order(&bytes))
+}
+
+#[cfg(feature = "std")]
+fn parse_hex_field_fq(hex: &str) -> Result<Fq, PicklesError> {
+    use ark_ff::PrimeField;
+
+    let hex = hex.strip_prefix("0x").unwrap_or(hex);
+    if hex.is_empty() {
+        return Ok(Fq::from(0u64));
+    }
+
+    let normalized = if hex.len() % 2 == 0 {
+        hex.to_owned()
+    } else {
+        format!("0{hex}")
+    };
+
+    let bytes = (0..normalized.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&normalized[i..i + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
+            PicklesError::InvalidFieldElement(format!("invalid canonical hex field: 0x{normalized}"))
+        })?;
+
+    Ok(Fq::from_be_bytes_mod_order(&bytes))
 }
 
 #[cfg(feature = "std")]
@@ -1020,4 +1412,63 @@ fn field_to_hex(field: Fp) -> String {
         out.push_str(&format!("{byte:02X}"));
     }
     out
+}
+
+#[cfg(feature = "std")]
+fn field_to_hex_fq(field: Fq) -> String {
+    use ark_ff::{BigInteger, PrimeField};
+
+    let bytes = field.into_bigint().to_bytes_be();
+    if bytes.iter().all(|byte| *byte == 0) {
+        return "0x0".into();
+    }
+    let first_non_zero = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .expect("non-zero byte present");
+    let trimmed = &bytes[first_non_zero..];
+    let mut out = String::from("0x");
+    for byte in trimmed {
+        out.push_str(&format!("{byte:02X}"));
+    }
+    out
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+    use core::str::FromStr;
+    use mina_curves::pasta::Fq;
+
+    fn challenge(lo: &str, hi: &str) -> BulletproofChallengeHex {
+        BulletproofChallengeHex {
+            prechallenge_inner: vec![lo.to_string(), hi.to_string()],
+        }
+    }
+
+    #[test]
+    fn test_step_bulletproof_challenge_to_field_matches_mina_regression() {
+        let field = step_bulletproof_challenge_to_field(&challenge("1", "2"))
+            .expect("challenge should map to field");
+        assert_eq!(
+            field,
+            Fp::from_str(
+                "6572569482697360481513594310601353836203307207270872842979315960925898757767"
+            )
+            .expect("valid field element"),
+        );
+    }
+
+    #[test]
+    fn test_wrap_bulletproof_challenge_to_field_matches_mina_regression() {
+        let field = wrap_bulletproof_challenge_to_field(&challenge("1", "2"))
+            .expect("challenge should map to field");
+        assert_eq!(
+            field,
+            Fq::from_str(
+                "2719017978331529270847521198778747340188358548055489578169293623337352440597"
+            )
+            .expect("valid field element"),
+        );
+    }
 }

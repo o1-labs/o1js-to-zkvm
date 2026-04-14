@@ -67,6 +67,20 @@ pub struct NamedSectionCount {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// One pair of zeta / zeta*omega evaluations from `prev_evals`.
+pub struct FieldEvalPairHex {
+    pub zeta: Vec<String>,
+    pub zeta_omega: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// A named `prev_evals` section with all field-evaluation pairs preserved.
+pub struct NamedFieldEvalSectionHex {
+    pub name: String,
+    pub evaluations: Vec<FieldEvalPairHex>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Pair of curve points used in the bulletproof LR rounds.
 pub struct CurvePointPairHex {
     pub left: CurvePointHex,
@@ -125,6 +139,7 @@ pub struct SideLoadedProofMetadata {
     pub next_step_challenge_polynomial_commitments: Vec<CurvePointHex>,
     pub next_step_old_bulletproof_challenges: Vec<Vec<BulletproofChallengeHex>>,
     pub prev_evals_public_input: Vec<String>,
+    pub prev_evals: Vec<NamedFieldEvalSectionHex>,
     pub prev_evals_sections: Vec<NamedSectionCount>,
     pub ft_eval1: String,
     pub inner_proof: WrapProofBodyHex,

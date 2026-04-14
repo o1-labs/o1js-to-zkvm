@@ -67,6 +67,17 @@ fn test_lower_simple_chain_metadata() {
             "0x27F0983EEEEDA6C38F9CADED64D50C2A76DC03DA50CC9F2FA1EB3B052901A397"
         ]
     );
+    assert_eq!(lowered.prev_evals.len(), 25);
+    assert_eq!(lowered.prev_evals[0].name, "w");
+    assert_eq!(lowered.prev_evals[0].evaluations.len(), 15);
+    assert_eq!(
+        lowered.prev_evals[0].evaluations[0].zeta,
+        vec!["0x09A1B454714DC0066457BEBB3D273278028293766AD6360C55BF4BB9D60A3C80"]
+    );
+    assert_eq!(
+        lowered.prev_evals[0].evaluations[0].zeta_omega,
+        vec!["0x143281FEAD233C699B5C64924683361B6D5FDF355B2366D67A7DF4FF52F24044"]
+    );
     assert_eq!(
         lowered.ft_eval1,
         "0x1D25ADB2CE3DABE0F470EB79FBF66F87520F8DC8B3215DD209E3B440EFA7556F"
@@ -115,6 +126,8 @@ fn test_lower_simple_chain_public_input_plan() {
     assert_eq!(plan.fields.len(), 40);
     assert_eq!(plan.fields[0].name, "combined_inner_product");
     assert_eq!(plan.fields[0].value_hex, None);
+    assert_eq!(plan.fields[1].name, "b");
+    assert_eq!(plan.fields[1].value_hex, None);
     assert_eq!(plan.fields[5].name, "beta");
     assert_eq!(
         plan.fields[5].value_hex.as_deref(),
@@ -136,14 +149,20 @@ fn test_lower_simple_chain_public_input_plan() {
         Some("0x83F28D3719302A9607961A46AE39E522")
     );
     assert_eq!(plan.fields[9].name, "xi");
-    assert_eq!(plan.fields[9].value_hex, None);
+    assert_eq!(
+        plan.fields[9].value_hex.as_deref(),
+        Some("0xE640F0D4947A0B85A237C94EF4116C27")
+    );
     assert_eq!(plan.fields[10].name, "sponge_digest_before_evaluations");
     assert_eq!(
         plan.fields[10].value_hex.as_deref(),
         Some("0x10BC8C92DADDE12BA2468A184E7B0047492848E427F589AF71FF935BACD018A0")
     );
     assert_eq!(plan.fields[11].name, "messages_for_next_wrap_proof");
-    assert_eq!(plan.fields[11].value_hex, None);
+    assert_eq!(
+        plan.fields[11].value_hex.as_deref(),
+        Some("0x14B9587ABB3069286296FF07B0984227297E0528EE9D5F2EEFE1C9C72BBA6078")
+    );
     assert_eq!(plan.fields[12].name, "messages_for_next_step_proof");
     assert_eq!(plan.fields[12].value_hex, None);
     assert_eq!(plan.fields[13].name, "bulletproof_challenges[0]");
