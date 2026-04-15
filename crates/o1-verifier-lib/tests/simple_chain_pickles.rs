@@ -7,10 +7,20 @@
 
 #![cfg(feature = "std")]
 
+use groupmap::GroupMap;
+use kimchi::error::VerifyError;
+use kimchi::verifier::verify_with_rng;
+use mina_curves::pasta::Pallas;
+use mina_poseidon::pasta::FULL_ROUNDS;
+use poly_commitment::commitment::CommitmentCurve;
 use o1_verifier_lib::{
     lower_simple_chain_metadata, lower_simple_chain_public_input_plan, lower_simple_chain_request,
-    lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle,
+    lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle, WrapBaseSponge,
+    WrapScalarSponge,
 };
+use poly_commitment::ipa::OpeningProof;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 const SIMPLE_CHAIN_BUNDLE_JSON: &str = include_str!("../../../fixtures/simple_chain_bundle.json");
 const REAL_SIMPLE_CHAIN_BUNDLE_JSON: &str =
@@ -283,4 +293,37 @@ fn test_lower_simple_chain_request_reconstructs_srs() {
     assert_eq!(lowered.public_input.len(), 40);
     assert_eq!(lowered.verifier_index.max_poly_size, 32768);
     assert_eq!(lowered.verifier_index.srs.g.len(), 32768);
+}
+
+#[test]
+fn test_verify_simple_chain_recursive_step_reports_current_wrap_failure() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+
+    let lowered = lower_simple_chain_request(&request).expect("lowering should succeed");
+    let group_map = <Pallas as CommitmentCurve>::Map::setup();
+    let mut rng = StdRng::seed_from_u64(42);
+
+    let result = verify_with_rng::<
+        FULL_ROUNDS,
+        Pallas,
+        WrapBaseSponge,
+        WrapScalarSponge,
+        OpeningProof<Pallas, FULL_ROUNDS>,
+        _,
+    >(
+        &group_map,
+        &lowered.verifier_index,
+        &lowered.proof,
+        &lowered.public_input,
+        &mut rng,
+    );
+
+    assert!(
+        matches!(result, Err(VerifyError::OpenProof)),
+        "unexpected wrap verification result: {result:?}"
+    );
 }
