@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use mina_curves::pasta::{Fp, Fq};
 
-use crate::pickles_types::PlonkFeatureFlags;
+use crate::pickles_types::{CurvePointHex, PlonkFeatureFlags};
 
 /// Minimal local shifted-value wrapper used by prepared-statement packing.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,6 +34,18 @@ pub struct Plonk {
     pub perm: ShiftedValue<Fp>,
     pub lookup: Option<[u64; 2]>,
     pub feature_flags: PlonkFeatureFlags,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DlogPlonkVerificationKeyEvals {
+    pub sigma: [CurvePointHex; 7],
+    pub coefficients: [CurvePointHex; 15],
+    pub generic: CurvePointHex,
+    pub psm: CurvePointHex,
+    pub complete_add: CurvePointHex,
+    pub mul: CurvePointHex,
+    pub emul: CurvePointHex,
+    pub endomul_scalar: CurvePointHex,
 }
 
 #[derive(Clone, Debug, PartialEq)]

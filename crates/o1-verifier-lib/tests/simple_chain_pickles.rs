@@ -9,20 +9,28 @@
 
 use groupmap::GroupMap;
 use ark_ff::{BigInteger, PrimeField};
+use kimchi::curve::KimchiCurve;
 use kimchi::error::VerifyError;
 use kimchi::verifier::verify_with_rng;
-use mina_curves::pasta::{Fp, Fq, Pallas};
+use mina_curves::pasta::{Fp, Fq, Pallas, Vesta};
 use mina_poseidon::pasta::FULL_ROUNDS;
+use mina_poseidon::sponge::ScalarChallenge;
 use poly_commitment::commitment::CommitmentCurve;
 use o1_verifier_lib::{
     pickles_mina_rust::{
+        DlogPlonkVerificationKeyEvals as MinaRustDlogPlonkVerificationKeyEvals,
         BranchData as MinaRustBranchData, DeferredValues as MinaRustDeferredValues,
+        FieldVectorAppState, MessagesForNextStepProof as MinaRustMessagesForNextStepProof,
+        MessagesForNextWrapProof as MinaRustMessagesForNextWrapProof,
         Plonk as MinaRustPlonk, PreparedStatement as MinaRustPreparedStatement,
         ProofState as MinaRustProofState, ShiftedValue as MinaRustShiftedValue,
     },
     lower_simple_chain_metadata, lower_simple_chain_public_input_plan, lower_simple_chain_request,
     lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle, WrapBaseSponge,
     WrapScalarSponge,
+};
+use o1_verifier_lib::pickles_types::{
+    BulletproofChallengeHex, CurvePointHex, PicklesVerifyRequest, SideLoadedProofMetadata,
 };
 use poly_commitment::ipa::OpeningProof;
 use rand::SeedableRng;
@@ -59,23 +67,6 @@ fn parse_hex_field_fp(hex: &str) -> Fp {
     Fp::from_be_bytes_mod_order(&bytes)
 }
 
-fn parse_hex_field_fq(hex: &str) -> Fq {
-    let hex = hex.strip_prefix("0x").unwrap_or(hex);
-    if hex.is_empty() {
-        return Fq::from(0u64);
-    }
-    let hex = if hex.len() % 2 == 0 {
-        hex.to_owned()
-    } else {
-        format!("0{hex}")
-    };
-    let bytes = (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("valid canonical hex"))
-        .collect::<Vec<_>>();
-    Fq::from_be_bytes_mod_order(&bytes)
-}
-
 fn hex64_limbs_to_u64_array<const N: usize>(limbs: &[String]) -> [u64; N] {
     let parsed = limbs
         .iter()
@@ -85,6 +76,121 @@ fn hex64_limbs_to_u64_array<const N: usize>(limbs: &[String]) -> [u64; N] {
     parsed
         .try_into()
         .unwrap_or_else(|_| panic!("expected {N} hex64 limbs, got {len}"))
+}
+
+fn field_to_hex<F: PrimeField>(field: F) -> String {
+    let bytes = field.into_bigint().to_bytes_be();
+    if bytes.is_empty() {
+        "0x0".into()
+    } else {
+        let mut out = String::with_capacity(2 + bytes.len() * 2);
+        out.push_str("0x");
+        for byte in bytes {
+            use std::fmt::Write as _;
+            write!(&mut out, "{byte:02X}").expect("write to string");
+        }
+        out
+    }
+}
+
+fn pack_hex64_limbs_to_field_fp(limbs: &[String]) -> Fp {
+    let mut bytes = Vec::with_capacity(limbs.len() * 8);
+    for limb in limbs {
+        let limb = u64::from_str_radix(limb, 16).expect("valid hex64 limb");
+        bytes.extend_from_slice(&limb.to_le_bytes());
+    }
+    Fp::from_le_bytes_mod_order(&bytes)
+}
+
+fn pack_hex64_limbs_to_field_fq(limbs: &[String]) -> Fq {
+    let mut bytes = Vec::with_capacity(limbs.len() * 8);
+    for limb in limbs {
+        let limb = u64::from_str_radix(limb, 16).expect("valid hex64 limb");
+        bytes.extend_from_slice(&limb.to_le_bytes());
+    }
+    Fq::from_le_bytes_mod_order(&bytes)
+}
+
+fn step_bulletproof_challenge_to_field(challenge: &BulletproofChallengeHex) -> Fp {
+    let packed = pack_hex64_limbs_to_field_fp(&challenge.prechallenge_inner);
+    let (_, endo) = Vesta::endos();
+    ScalarChallenge::new(packed).to_field(endo)
+}
+
+fn wrap_bulletproof_challenge_to_field(challenge: &BulletproofChallengeHex) -> Fq {
+    let packed = pack_hex64_limbs_to_field_fq(&challenge.prechallenge_inner);
+    let (_, endo) = Pallas::endos();
+    ScalarChallenge::new(packed).to_field(endo)
+}
+
+fn build_mina_rust_vk_evals(
+    lowered: &o1_verifier_lib::pickles_lowering::LoweredRawWrapArtifacts,
+) -> MinaRustDlogPlonkVerificationKeyEvals {
+    let point_hex = |point: Pallas| {
+        CurvePointHex {
+            x: field_to_hex(point.x),
+            y: field_to_hex(point.y),
+        }
+    };
+
+    MinaRustDlogPlonkVerificationKeyEvals {
+        sigma: std::array::from_fn(|i| point_hex(lowered.verifier_index.sigma_comm[i].chunks[0])),
+        coefficients: std::array::from_fn(|i| {
+            point_hex(lowered.verifier_index.coefficients_comm[i].chunks[0])
+        }),
+        generic: point_hex(lowered.verifier_index.generic_comm.chunks[0]),
+        psm: point_hex(lowered.verifier_index.psm_comm.chunks[0]),
+        complete_add: point_hex(lowered.verifier_index.complete_add_comm.chunks[0]),
+        mul: point_hex(lowered.verifier_index.mul_comm.chunks[0]),
+        emul: point_hex(lowered.verifier_index.emul_comm.chunks[0]),
+        endomul_scalar: point_hex(lowered.verifier_index.endomul_scalar_comm.chunks[0]),
+    }
+}
+
+fn build_mina_rust_wrap_message(
+    metadata: &SideLoadedProofMetadata,
+) -> MinaRustMessagesForNextWrapProof {
+    MinaRustMessagesForNextWrapProof {
+        challenge_polynomial_commitment: metadata.wrap_challenge_polynomial_commitment.clone(),
+        old_bulletproof_challenges: metadata
+            .wrap_old_bulletproof_challenges
+            .iter()
+            .map(|group: &Vec<BulletproofChallengeHex>| {
+                let fields = group
+                    .iter()
+                    .map(wrap_bulletproof_challenge_to_field)
+                    .collect::<Vec<_>>();
+                fields.try_into().expect("15 wrap bulletproof challenges")
+            })
+            .collect(),
+    }
+}
+
+fn build_mina_rust_step_message(
+    request: &PicklesVerifyRequest,
+    metadata: &SideLoadedProofMetadata,
+    lowered: &o1_verifier_lib::pickles_lowering::LoweredRawWrapArtifacts,
+) -> MinaRustMessagesForNextStepProof<FieldVectorAppState> {
+    MinaRustMessagesForNextStepProof {
+        app_state: FieldVectorAppState {
+            fields: request.statement.to_fields(),
+        },
+        dlog_plonk_index: build_mina_rust_vk_evals(lowered),
+        challenge_polynomial_commitments: metadata
+            .next_step_challenge_polynomial_commitments
+            .clone(),
+        old_bulletproof_challenges: metadata
+            .next_step_old_bulletproof_challenges
+            .iter()
+            .map(|group: &Vec<BulletproofChallengeHex>| {
+                let fields = group
+                    .iter()
+                    .map(step_bulletproof_challenge_to_field)
+                    .collect::<Vec<_>>();
+                fields.try_into().expect("16 step bulletproof challenges")
+            })
+            .collect(),
+    }
 }
 
 #[test]
@@ -284,6 +390,7 @@ fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
         .expect("recursive_step fixture request");
     let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
     let plan = lower_simple_chain_public_input_plan(&request).expect("public-input plan");
+    let lowered = lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap lowering");
     let oracle = request
         .exported_wrap_oracle_fields
         .as_ref()
@@ -292,9 +399,10 @@ fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
         .exported_wrap_public_input
         .as_ref()
         .expect("recursive_step should include exported wrap public input");
+    let wrap_message = build_mina_rust_wrap_message(&metadata);
+    let step_message = build_mina_rust_step_message(&request, &metadata, &lowered);
 
     let field_to_u64x4_fp = |field: Fp| field.into_bigint().0;
-    let field_to_u64x4_fq = |field: Fq| field.into_bigint().0;
     let prepared = MinaRustPreparedStatement {
         proof_state: MinaRustProofState {
             deferred_values: MinaRustDeferredValues {
@@ -339,16 +447,9 @@ fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
             sponge_digest_before_evaluations: hex64_limbs_to_u64_array::<4>(
                 &metadata.sponge_digest_before_evaluations,
             ),
-            messages_for_next_wrap_proof: field_to_u64x4_fq(parse_hex_field_fq(
-                plan.fields[11]
-                    .value_hex
-                    .as_deref()
-                    .expect("messages_for_next_wrap_proof"),
-            )),
+            messages_for_next_wrap_proof: wrap_message.hash().expect("wrap message hash"),
         },
-        messages_for_next_step_proof: field_to_u64x4_fp(parse_hex_field_fp(
-            &oracle.messages_for_next_step_proof_field_hex,
-        )),
+        messages_for_next_step_proof: step_message.hash().expect("step message hash"),
     };
 
     let packed = prepared
@@ -371,6 +472,55 @@ fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
         };
         assert_eq!(normalize_hex(&actual_hex), normalize_hex(expected_hex));
     }
+}
+
+#[test]
+fn test_mina_rust_wrap_message_hash_matches_exported_wrap_field() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
+    let plan = lower_simple_chain_public_input_plan(&request).expect("public-input plan");
+
+    let wrap_message = build_mina_rust_wrap_message(&metadata);
+    let hash = Fq::from_bigint(ark_ff::BigInt::<4>::new(wrap_message.hash().expect("wrap hash")))
+        .expect("valid wrap hash field");
+
+    assert_eq!(
+        normalize_hex(&field_to_hex(hash)),
+        normalize_hex(
+            plan.fields[11]
+                .value_hex
+                .as_deref()
+                .expect("messages_for_next_wrap_proof")
+        )
+    );
+}
+
+#[test]
+fn test_mina_rust_step_message_hash_matches_exported_oracle_field() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
+    let lowered = lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap lowering");
+    let oracle = request
+        .exported_wrap_oracle_fields
+        .as_ref()
+        .expect("recursive_step should include exported oracle fields");
+
+    let step_message = build_mina_rust_step_message(&request, &metadata, &lowered);
+    let hash = Fp::from_bigint(ark_ff::BigInt::<4>::new(step_message.hash().expect("step hash")))
+        .expect("valid step hash field");
+
+    assert_eq!(
+        normalize_hex(&field_to_hex(hash)),
+        normalize_hex(&oracle.messages_for_next_step_proof_field_hex)
+    );
 }
 
 #[test]
