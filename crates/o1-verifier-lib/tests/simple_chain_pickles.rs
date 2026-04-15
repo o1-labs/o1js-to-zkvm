@@ -235,6 +235,11 @@ fn test_lower_simple_chain_raw_wrap_artifacts() {
     assert_eq!(lowered.proof.commitments.w_comm.len(), 15);
     assert_eq!(lowered.proof.commitments.t_comm.len(), 7);
     assert_eq!(lowered.proof.proof.lr.len(), 15);
+    assert_eq!(lowered.proof.prev_challenges.len(), 2);
+    assert_eq!(lowered.proof.prev_challenges[0].chals.len(), 15);
+    assert_eq!(lowered.proof.prev_challenges[1].chals.len(), 15);
+    assert_eq!(lowered.proof.prev_challenges[0].comm.chunks.len(), 1);
+    assert_eq!(lowered.proof.prev_challenges[1].comm.chunks.len(), 1);
 }
 
 #[test]
@@ -258,6 +263,11 @@ fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     assert_eq!(lowered.proof.commitments.w_comm.len(), 15);
     assert_eq!(lowered.proof.commitments.t_comm.len(), 7);
     assert_eq!(lowered.proof.proof.lr.len(), 15);
+    assert_eq!(lowered.proof.prev_challenges.len(), 2);
+    assert_eq!(lowered.proof.prev_challenges[0].chals.len(), 15);
+    assert_eq!(lowered.proof.prev_challenges[1].chals.len(), 15);
+    assert_eq!(lowered.proof.prev_challenges[0].comm.chunks.len(), 1);
+    assert_eq!(lowered.proof.prev_challenges[1].comm.chunks.len(), 1);
 }
 
 #[test]

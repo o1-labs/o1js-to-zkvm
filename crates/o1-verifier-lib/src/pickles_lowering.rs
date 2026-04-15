@@ -13,8 +13,10 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use ark_ec::AffineRepr;
-use ark_ff::{BigInteger, Field, PrimeField};
+use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ff::{BigInteger, Field, PrimeField, Zero};
+#[cfg(feature = "std")]
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 #[cfg(feature = "std")]
 use blake2::{Blake2b512, Digest};
 use groupmap::GroupMap;
@@ -24,7 +26,7 @@ use kimchi::curve::KimchiCurve;
 use kimchi::linearization::expr_linearization;
 use kimchi::plonk_sponge::FrSponge;
 #[cfg(feature = "std")]
-use kimchi::proof::{PointEvaluations, ProofEvaluations, ProverCommitments};
+use kimchi::proof::{PointEvaluations, ProofEvaluations, ProverCommitments, RecursionChallenge};
 use mina_curves::pasta::{Fp, Fq, Pallas, Vesta};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::{fp_kimchi, fq_kimchi, FULL_ROUNDS};
@@ -32,10 +34,12 @@ use mina_poseidon::poseidon::{ArithmeticSponge, Sponge};
 use mina_poseidon::sponge::ScalarChallenge;
 #[cfg(feature = "std")]
 use poly_commitment::commitment::PolyComm;
+#[cfg(feature = "std")]
+use poly_commitment::commitment::b_poly_coefficients;
 use poly_commitment::commitment::CommitmentCurve;
-use poly_commitment::ipa::SRS;
 #[cfg(feature = "std")]
 use poly_commitment::ipa::OpeningProof;
+use poly_commitment::ipa::SRS;
 #[cfg(feature = "std")]
 use serde::Deserialize;
 
@@ -69,11 +73,7 @@ pub fn lower_simple_chain_request(
 ) -> Result<LoweredWrapInstance, PicklesError> {
     #[cfg(feature = "std")]
     {
-        let mut lowered = lower_simple_chain_raw_wrap_artifacts(request)?;
-        lowered.verifier_index.srs = alloc::sync::Arc::new(reconstruct_wrap_srs(
-            lowered.verifier_index.max_poly_size,
-        )?);
-
+        let lowered = lower_simple_chain_raw_wrap_artifacts(request)?;
         return Ok(LoweredWrapInstance {
             verifier_index: lowered.verifier_index,
             proof: lowered.proof,
@@ -132,8 +132,16 @@ pub fn lower_simple_chain_raw_wrap_artifacts(
         .fields
         .clone();
 
-    let verifier_index = parse_raw_wrap_verifier_index(&raw_wrap_verifier.verifier_index_json)?;
-    let proof = parse_raw_wrap_proof(&raw_wrap_proof.proof_json)?;
+    let metadata = lower_simple_chain_metadata(request)?;
+    let mut verifier_index = parse_raw_wrap_verifier_index(&raw_wrap_verifier.verifier_index_json)?;
+    let srs = reconstruct_wrap_srs(verifier_index.max_poly_size)?;
+    let proof = parse_raw_wrap_proof(
+        &raw_wrap_proof.proof_json,
+        &metadata,
+        &srs,
+        verifier_index.prev_challenges,
+    )?;
+    verifier_index.srs = alloc::sync::Arc::new(srs);
 
     Ok(LoweredRawWrapArtifacts {
         verifier_index,
@@ -592,7 +600,12 @@ impl<'de> Deserialize<'de> for RawPointEvaluationsJson {
 }
 
 #[cfg(feature = "std")]
-fn parse_raw_wrap_proof(json: &str) -> Result<PallasProof, PicklesError> {
+fn parse_raw_wrap_proof(
+    json: &str,
+    metadata: &SideLoadedProofMetadata,
+    srs: &SRS<Pallas>,
+    expected_prev_challenges: usize,
+) -> Result<PallasProof, PicklesError> {
     let raw: RawWrapProofJson = serde_json::from_str(json)
         .map_err(|err| PicklesError::InvalidJson(format!("raw wrap proof: {err}")))?;
 
@@ -770,7 +783,11 @@ fn parse_raw_wrap_proof(json: &str) -> Result<PallasProof, PicklesError> {
                 .transpose()?,
         },
         ft_eval1: parse_hex_field_fq(&raw.openings.ft_eval1)?,
-        prev_challenges: Vec::new(),
+        prev_challenges: materialize_wrap_prev_challenges(
+            metadata,
+            srs,
+            expected_prev_challenges,
+        )?,
     })
 }
 
@@ -807,6 +824,96 @@ fn parse_raw_point_evaluations(
             .map(|field| parse_hex_field_fq(field))
             .collect::<Result<Vec<_>, _>>()?,
     })
+}
+
+#[cfg(feature = "std")]
+fn materialize_wrap_prev_challenges(
+    metadata: &SideLoadedProofMetadata,
+    srs: &SRS<Pallas>,
+    expected_prev_challenges: usize,
+) -> Result<Vec<RecursionChallenge<Pallas>>, PicklesError> {
+    let challenge_sets = metadata
+        .wrap_old_bulletproof_challenges
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .map(wrap_bulletproof_challenge_to_field)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if challenge_sets.len() != expected_prev_challenges {
+        return Err(PicklesError::InvalidJson(format!(
+            "wrap_old_bulletproof_challenges length mismatch: expected {expected_prev_challenges}, got {}",
+            challenge_sets.len()
+        )));
+    }
+
+    let dummy_comm = wrap_b_poly_commitment(srs, challenge_sets.first().ok_or_else(|| {
+        PicklesError::InvalidJson("missing wrap_old_bulletproof_challenges".into())
+    })?);
+
+    let mut commitments = Vec::with_capacity(expected_prev_challenges);
+    let actual_commitments = metadata
+        .next_step_challenge_polynomial_commitments
+        .iter()
+        .map(parse_curve_point_hex_pallas)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if actual_commitments.len() > expected_prev_challenges {
+        return Err(PicklesError::InvalidJson(format!(
+            "next_step challenge commitments length mismatch: expected at most {expected_prev_challenges}, got {}",
+            actual_commitments.len()
+        )));
+    }
+
+    for _ in 0..(expected_prev_challenges - actual_commitments.len()) {
+        commitments.push(dummy_comm.clone());
+    }
+    commitments.extend(
+        actual_commitments
+            .into_iter()
+            .map(|point| PolyComm::new(vec![point])),
+    );
+
+    Ok(challenge_sets
+        .into_iter()
+        .zip(commitments)
+        .map(|(chals, comm)| RecursionChallenge::new(chals, comm))
+        .collect())
+}
+
+#[cfg(feature = "std")]
+fn parse_curve_point_hex_pallas(point: &CurvePointHex) -> Result<Pallas, PicklesError> {
+    let x = parse_hex_field(&point.x)?;
+    let y = parse_hex_field(&point.y)?;
+    Ok(Pallas::new_unchecked(x, y))
+}
+
+#[cfg(feature = "std")]
+fn wrap_b_poly_commitment(srs: &SRS<Pallas>, chals: &[Fq]) -> PolyComm<Pallas> {
+    let coeffs = b_poly_coefficients(chals);
+    let poly = DensePolynomial::from_coefficients_vec(coeffs);
+    type PallasGroup = <Pallas as AffineRepr>::Group;
+
+    let mut chunks = if poly.is_zero() {
+        vec![PallasGroup::zero().into_affine()]
+    } else {
+        poly.coeffs
+            .chunks(srs.g.len())
+            .map(|chunk| {
+                let coeffs = chunk.iter().map(|c| c.into_bigint()).collect::<Vec<_>>();
+                PallasGroup::msm_bigint(&srs.g[..chunk.len()], &coeffs).into_affine()
+            })
+            .collect()
+    };
+
+    for _ in chunks.len()..1 {
+        chunks.push(Pallas::zero());
+    }
+
+    PolyComm::new(chunks)
 }
 
 #[cfg(feature = "std")]
