@@ -1,7 +1,7 @@
 //! Thin orchestration layer for the future Pickles verifier path.
 //!
 //! Today this module is mostly a placeholder: it routes through the lowering
-//! layer and then into the existing raw-Kimchi verifier, but the lowering step
+//! layer and then into the wrap-side raw-Kimchi verifier, but the lowering step
 //! is still incomplete for real Mina Pickles proofs.
 
 use crate::pickles_error::PicklesError;
@@ -17,7 +17,7 @@ pub fn verify_simple_chain_pickles<R: rand::RngCore + rand::CryptoRng>(
     rng: &mut R,
 ) -> Result<bool, PicklesError> {
     let lowered = lower_simple_chain_request(request)?;
-    Ok(crate::verify_kimchi_proof(
+    Ok(crate::verify_wrap_kimchi_proof(
         &lowered.verifier_index,
         &lowered.proof,
         &lowered.public_input,

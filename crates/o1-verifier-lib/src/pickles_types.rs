@@ -10,7 +10,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use mina_curves::pasta::Fp;
+use mina_curves::pasta::{Fp, Fq};
 
 use crate::pickles_error::PicklesError;
 
@@ -172,7 +172,7 @@ pub struct WrapPublicInputPlan {
 /// Exact wrap public-input vector exported by Mina as canonical field hex strings.
 pub struct ExportedWrapPublicInput {
     pub hex_fields: Vec<String>,
-    pub fields: Vec<Fp>,
+    pub fields: Vec<Fq>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

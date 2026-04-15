@@ -8,7 +8,7 @@
 use std::str::FromStr;
 
 use ark_ff::PrimeField;
-use mina_curves::pasta::Fp;
+use mina_curves::pasta::{Fp, Fq};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -72,10 +72,10 @@ fn decode_base64(field_name: &'static str, value: &str) -> Result<Vec<u8>, Pickl
     base64::decode(value).map_err(|_| PicklesError::InvalidBase64(field_name))
 }
 
-fn parse_hex_field(hex: &str) -> Result<Fp, PicklesError> {
+fn parse_hex_field(hex: &str) -> Result<Fq, PicklesError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     if hex.is_empty() {
-        return Ok(Fp::from(0u64));
+        return Ok(Fq::from(0u64));
     }
     let hex = if hex.len() % 2 == 0 {
         hex.to_owned()
@@ -91,10 +91,10 @@ fn parse_hex_field(hex: &str) -> Result<Fp, PicklesError> {
             PicklesError::InvalidFieldElement(format!("invalid canonical hex field: 0x{hex}"))
         })?;
 
-    Ok(Fp::from_be_bytes_mod_order(&bytes))
+    Ok(Fq::from_be_bytes_mod_order(&bytes))
 }
 
-fn parse_hex_field_strings(fields: &[String]) -> Result<Vec<Fp>, PicklesError> {
+fn parse_hex_field_strings(fields: &[String]) -> Result<Vec<Fq>, PicklesError> {
     fields.iter().map(|field| parse_hex_field(field)).collect()
 }
 

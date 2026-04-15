@@ -5,8 +5,8 @@
 //! - expose the current missing lowering boundary explicitly
 //! - derive a partial wrap public-input plan from the decoded metadata
 //!
-//! It does not yet construct the final wrap `VerifierIndex`, raw Kimchi proof,
-//! or exact `Vec<Fp>` needed for end-to-end verification.
+//! It does not yet construct the final recursion accumulators needed to turn
+//! Mina's exported wrap proof view into a fully verification-ready Kimchi proof.
 
 extern crate alloc;
 
@@ -25,7 +25,7 @@ use kimchi::linearization::expr_linearization;
 use kimchi::plonk_sponge::FrSponge;
 #[cfg(feature = "std")]
 use kimchi::proof::{PointEvaluations, ProofEvaluations, ProverCommitments};
-use mina_curves::pasta::{Fp, Fq, Pallas};
+use mina_curves::pasta::{Fp, Fq, Pallas, Vesta};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::{fp_kimchi, fq_kimchi, FULL_ROUNDS};
 use mina_poseidon::poseidon::{ArithmeticSponge, Sponge};
@@ -46,18 +46,18 @@ use crate::pickles_types::{
     PlonkDeferredValuesHex, PlonkFeatureFlags, SideLoadedProofMetadata, WrapBulletproofHex,
     WrapProofBodyHex, WrapProofCommitmentsHex, WrapPublicInputFieldPlan, WrapPublicInputPlan,
 };
-use crate::{ScalarSponge, Vesta, VestaProof, VestaVerifierIndex};
+use crate::{PallasProof, PallasVerifierIndex, ScalarSponge};
 
 pub struct LoweredWrapInstance {
-    pub verifier_index: VestaVerifierIndex,
-    pub proof: VestaProof,
-    pub public_input: Vec<Fp>,
+    pub verifier_index: PallasVerifierIndex,
+    pub proof: PallasProof,
+    pub public_input: Vec<Fq>,
 }
 
 pub struct LoweredRawWrapArtifacts {
-    pub verifier_index: VestaVerifierIndex,
-    pub proof: VestaProof,
-    pub public_input: Vec<Fp>,
+    pub verifier_index: PallasVerifierIndex,
+    pub proof: PallasProof,
+    pub public_input: Vec<Fq>,
 }
 
 /// Future lowering entry point from Mina side-loaded artifacts into raw Kimchi inputs.
@@ -142,20 +142,20 @@ pub fn lower_simple_chain_raw_wrap_artifacts(
     })
 }
 
-fn reconstruct_wrap_srs(max_poly_size: usize) -> Result<SRS<Vesta>, PicklesError> {
+fn reconstruct_wrap_srs(max_poly_size: usize) -> Result<SRS<Pallas>, PicklesError> {
     if max_poly_size == 0 {
         return Err(PicklesError::InvalidJson(
             "raw wrap verifier index has max_poly_size = 0".into(),
         ));
     }
 
-    let map = <Vesta as CommitmentCurve>::Map::setup();
+    let map = <Pallas as CommitmentCurve>::Map::setup();
     let g = (0..max_poly_size)
         .map(|i| {
             let mut h = Blake2b512::new();
             #[allow(clippy::cast_possible_truncation)]
             h.update((i as u32).to_be_bytes());
-            point_of_random_bytes_vesta(&map, &h.finalize())
+            point_of_random_bytes_pallas(&map, &h.finalize())
         })
         .collect();
 
@@ -163,22 +163,22 @@ fn reconstruct_wrap_srs(max_poly_size: usize) -> Result<SRS<Vesta>, PicklesError
         let mut digest = Blake2b512::new();
         digest.update(b"srs_misc");
         digest.update(0_u32.to_be_bytes());
-        point_of_random_bytes_vesta(&map, &digest.finalize())
+        point_of_random_bytes_pallas(&map, &digest.finalize())
     };
 
-    let mut srs = SRS::<Vesta>::default();
+    let mut srs = SRS::<Pallas>::default();
     srs.g = g;
     srs.h = h;
     Ok(srs)
 }
 
 #[cfg(feature = "std")]
-fn point_of_random_bytes_vesta(
-    map: &<Vesta as CommitmentCurve>::Map,
+fn point_of_random_bytes_pallas(
+    map: &<Pallas as CommitmentCurve>::Map,
     random_bytes: &[u8],
-) -> Vesta {
+) -> Pallas {
     const N: usize = 31;
-    let extension_degree = <Fq as Field>::extension_degree() as usize;
+    let extension_degree = <Fp as Field>::extension_degree() as usize;
     let mut base_fields = Vec::with_capacity(N * extension_degree);
 
     for base_count in 0..extension_degree {
@@ -190,16 +190,16 @@ fn point_of_random_bytes_vesta(
             }
         }
 
-        let n = <<Fq as Field>::BasePrimeField as PrimeField>::BigInt::from_bits_be(&bits);
-        let t = <<Fq as Field>::BasePrimeField as PrimeField>::from_bigint(n)
+        let n = <<Fp as Field>::BasePrimeField as PrimeField>::BigInt::from_bits_be(&bits);
+        let t = <<Fp as Field>::BasePrimeField as PrimeField>::from_bigint(n)
             .expect("packing code has a bug");
         base_fields.push(t);
     }
 
-    let t = Fq::from_base_prime_field_elems(base_fields)
+    let t = Fp::from_base_prime_field_elems(base_fields)
         .expect("invalid extension-field packing for SRS generation");
     let (x, y) = map.to_group(t);
-    Vesta::of_coordinates(x, y).mul_by_cofactor()
+    Pallas::of_coordinates(x, y).mul_by_cofactor()
 }
 
 #[cfg(feature = "std")]
@@ -297,7 +297,7 @@ impl<'de> Deserialize<'de> for RawWrapPointJson {
 }
 
 #[cfg(feature = "std")]
-fn parse_raw_wrap_verifier_index(json: &str) -> Result<VestaVerifierIndex, PicklesError> {
+fn parse_raw_wrap_verifier_index(json: &str) -> Result<PallasVerifierIndex, PicklesError> {
     let raw: RawWrapVerifierIndexJson = serde_json::from_str(json)
         .map_err(|err| PicklesError::InvalidJson(format!("raw wrap verifier index: {err}")))?;
 
@@ -307,25 +307,25 @@ fn parse_raw_wrap_verifier_index(json: &str) -> Result<VestaVerifierIndex, Pickl
         ));
     }
 
-    let parsed_group_gen = parse_hex_field(&raw.domain.group_gen)?;
+    let parsed_group_gen = parse_hex_field_fq(&raw.domain.group_gen)?;
     let size = 1u64 << raw.domain.log_size_of_group;
-    let size_as_field_element = Fp::from(size);
+    let size_as_field_element = Fq::from(size);
     let size_inv = size_as_field_element.inverse().ok_or_else(|| {
         PicklesError::InvalidJson("raw wrap domain size is not invertible".into())
     })?;
     let group_gen_inv = parsed_group_gen.inverse().ok_or_else(|| {
         PicklesError::InvalidJson("raw wrap domain group_gen is not invertible".into())
     })?;
-    let domain = ark_poly::domain::Radix2EvaluationDomain::<Fp> {
+    let domain = ark_poly::domain::Radix2EvaluationDomain::<Fq> {
         size,
         log_size_of_group: raw.domain.log_size_of_group as u32,
         size_as_field_element,
         size_inv,
         group_gen: parsed_group_gen,
         group_gen_inv,
-        offset: Fp::from(1u64),
-        offset_inv: Fp::from(1u64),
-        offset_pow_size: Fp::from(1u64),
+        offset: Fq::from(1u64),
+        offset_inv: Fq::from(1u64),
+        offset_pow_size: Fq::from(1u64),
     };
 
     let sigma_comm = raw
@@ -349,7 +349,7 @@ fn parse_raw_wrap_verifier_index(json: &str) -> Result<VestaVerifierIndex, Pickl
     let shift = raw
         .shifts
         .iter()
-        .map(|field| parse_hex_field(field))
+        .map(|field| parse_hex_field_fq(field))
         .collect::<Result<Vec<_>, _>>()?
         .try_into()
         .map_err(|_| PicklesError::InvalidJson("raw wrap shifts length mismatch".into()))?;
@@ -394,10 +394,10 @@ fn parse_raw_wrap_verifier_index(json: &str) -> Result<VestaVerifierIndex, Pickl
         rot: rot_comm.is_some(),
         lookup_features: Default::default(),
     };
-    let (linearization, powers_of_alpha) = expr_linearization::<Fp>(Some(&feature_flags), true);
-    let (_, endo) = Vesta::endos();
+    let (linearization, powers_of_alpha) = expr_linearization::<Fq>(Some(&feature_flags), true);
+    let (_, endo) = Pallas::endos();
 
-    Ok(VestaVerifierIndex {
+    Ok(PallasVerifierIndex {
         domain,
         max_poly_size: raw.max_poly_size,
         zk_rows: raw.zk_rows,
@@ -429,7 +429,7 @@ fn parse_raw_wrap_verifier_index(json: &str) -> Result<VestaVerifierIndex, Pickl
 }
 
 #[cfg(feature = "std")]
-fn parse_raw_wrap_poly_comm(raw: RawWrapPolyCommJson) -> Result<PolyComm<Vesta>, PicklesError> {
+fn parse_raw_wrap_poly_comm(raw: RawWrapPolyCommJson) -> Result<PolyComm<Pallas>, PicklesError> {
     Ok(PolyComm::new(
         raw.unshifted
             .into_iter()
@@ -439,10 +439,10 @@ fn parse_raw_wrap_poly_comm(raw: RawWrapPolyCommJson) -> Result<PolyComm<Vesta>,
 }
 
 #[cfg(feature = "std")]
-fn parse_raw_wrap_point(raw: RawWrapPointJson) -> Result<Vesta, PicklesError> {
-    let x = parse_hex_field_fq(&raw.x)?;
-    let y = parse_hex_field_fq(&raw.y)?;
-    Ok(Vesta::new_unchecked(x, y))
+fn parse_raw_wrap_point(raw: RawWrapPointJson) -> Result<Pallas, PicklesError> {
+    let x = parse_hex_field(&raw.x)?;
+    let y = parse_hex_field(&raw.y)?;
+    Ok(Pallas::new_unchecked(x, y))
 }
 
 #[cfg(feature = "std")]
@@ -592,7 +592,7 @@ impl<'de> Deserialize<'de> for RawPointEvaluationsJson {
 }
 
 #[cfg(feature = "std")]
-fn parse_raw_wrap_proof(json: &str) -> Result<VestaProof, PicklesError> {
+fn parse_raw_wrap_proof(json: &str) -> Result<PallasProof, PicklesError> {
     let raw: RawWrapProofJson = serde_json::from_str(json)
         .map_err(|err| PicklesError::InvalidJson(format!("raw wrap proof: {err}")))?;
 
@@ -605,7 +605,7 @@ fn parse_raw_wrap_proof(json: &str) -> Result<VestaProof, PicklesError> {
         .try_into()
         .map_err(|_| PicklesError::InvalidJson("raw wrap w_comm length mismatch".into()))?;
     let t_comm = parse_raw_proof_poly_comm(raw.messages.t_comm)?;
-    let lookup_sorted: [Option<PointEvaluations<Vec<Fp>>>; 5] = raw
+    let lookup_sorted: [Option<PointEvaluations<Vec<Fq>>>; 5] = raw
         .openings
         .evals
         .lookup_sorted
@@ -615,7 +615,7 @@ fn parse_raw_wrap_proof(json: &str) -> Result<VestaProof, PicklesError> {
         .try_into()
         .map_err(|_| PicklesError::InvalidJson("raw wrap lookup_sorted length mismatch".into()))?;
 
-    Ok(VestaProof {
+    Ok(PallasProof {
         commitments: ProverCommitments {
             w_comm,
             z_comm: parse_raw_proof_poly_comm(raw.messages.z_comm)?,
@@ -633,8 +633,8 @@ fn parse_raw_wrap_proof(json: &str) -> Result<VestaProof, PicklesError> {
                 })
                 .collect::<Result<Vec<_>, PicklesError>>()?,
             delta: parse_raw_proof_point(raw.openings.proof.delta)?,
-            z1: parse_hex_field(&raw.openings.proof.z_1)?,
-            z2: parse_hex_field(&raw.openings.proof.z_2)?,
+            z1: parse_hex_field_fq(&raw.openings.proof.z_1)?,
+            z2: parse_hex_field_fq(&raw.openings.proof.z_2)?,
             sg: parse_raw_proof_point(raw.openings.proof.challenge_polynomial_commitment)?,
         },
         evals: ProofEvaluations {
@@ -769,13 +769,13 @@ fn parse_raw_wrap_proof(json: &str) -> Result<VestaProof, PicklesError> {
                 .map(parse_raw_point_evaluations)
                 .transpose()?,
         },
-        ft_eval1: parse_hex_field(&raw.openings.ft_eval1)?,
+        ft_eval1: parse_hex_field_fq(&raw.openings.ft_eval1)?,
         prev_challenges: Vec::new(),
     })
 }
 
 #[cfg(feature = "std")]
-fn parse_raw_proof_poly_comm(raw: RawProofPolyCommJson) -> Result<PolyComm<Vesta>, PicklesError> {
+fn parse_raw_proof_poly_comm(raw: RawProofPolyCommJson) -> Result<PolyComm<Pallas>, PicklesError> {
     Ok(PolyComm::new(
         raw.0
             .into_iter()
@@ -785,26 +785,26 @@ fn parse_raw_proof_poly_comm(raw: RawProofPolyCommJson) -> Result<PolyComm<Vesta
 }
 
 #[cfg(feature = "std")]
-fn parse_raw_proof_point(raw: RawProofPointJson) -> Result<Vesta, PicklesError> {
-    let x = parse_hex_field_fq(&raw.x)?;
-    let y = parse_hex_field_fq(&raw.y)?;
-    Ok(Vesta::new_unchecked(x, y))
+fn parse_raw_proof_point(raw: RawProofPointJson) -> Result<Pallas, PicklesError> {
+    let x = parse_hex_field(&raw.x)?;
+    let y = parse_hex_field(&raw.y)?;
+    Ok(Pallas::new_unchecked(x, y))
 }
 
 #[cfg(feature = "std")]
 fn parse_raw_point_evaluations(
     raw: RawPointEvaluationsJson,
-) -> Result<PointEvaluations<Vec<Fp>>, PicklesError> {
+) -> Result<PointEvaluations<Vec<Fq>>, PicklesError> {
     Ok(PointEvaluations {
         zeta: raw
             .zeta
             .iter()
-            .map(|field| parse_hex_field(field))
+            .map(|field| parse_hex_field_fq(field))
             .collect::<Result<Vec<_>, _>>()?,
         zeta_omega: raw
             .zeta_omega
             .iter()
-            .map(|field| parse_hex_field(field))
+            .map(|field| parse_hex_field_fq(field))
             .collect::<Result<Vec<_>, _>>()?,
     })
 }

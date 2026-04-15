@@ -10,7 +10,7 @@ use kimchi::linearization::expr_linearization;
 use kimchi::proof::ProverProof;
 use kimchi::verifier::verify_with_rng;
 use kimchi::verifier_index::VerifierIndex;
-use mina_curves::pasta::{Fp, Vesta, VestaParameters};
+use mina_curves::pasta::{Fp, Fq, Pallas, PallasParameters, Vesta, VestaParameters};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::FULL_ROUNDS;
 use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge};
@@ -29,8 +29,12 @@ pub use pickles_verify::*;
 pub type SpongeParams = PlonkSpongeConstantsKimchi;
 pub type BaseSponge = DefaultFqSponge<VestaParameters, SpongeParams, FULL_ROUNDS>;
 pub type ScalarSponge = DefaultFrSponge<Fp, SpongeParams, FULL_ROUNDS>;
+pub type WrapBaseSponge = DefaultFqSponge<PallasParameters, SpongeParams, FULL_ROUNDS>;
+pub type WrapScalarSponge = DefaultFrSponge<Fq, SpongeParams, FULL_ROUNDS>;
 pub type VestaVerifierIndex = VerifierIndex<FULL_ROUNDS, Vesta, SRS<Vesta>>;
 pub type VestaProof = ProverProof<Vesta, OpeningProof<Vesta, FULL_ROUNDS>, FULL_ROUNDS>;
+pub type PallasVerifierIndex = VerifierIndex<FULL_ROUNDS, Pallas, SRS<Pallas>>;
+pub type PallasProof = ProverProof<Pallas, OpeningProof<Pallas, FULL_ROUNDS>, FULL_ROUNDS>;
 
 pub fn deserialize_public_inputs(bytes: &[u8]) -> Vec<Fp> {
     assert!(
@@ -94,6 +98,25 @@ pub fn verify_kimchi_proof<R: rand::RngCore + rand::CryptoRng>(
         BaseSponge,
         ScalarSponge,
         OpeningProof<Vesta, FULL_ROUNDS>,
+        _,
+    >(&group_map, vi, proof, public_input, rng)
+    .is_ok()
+}
+
+/// Verify a Pallas/Tock-side Kimchi proof against a VerifierIndex.
+pub fn verify_wrap_kimchi_proof<R: rand::RngCore + rand::CryptoRng>(
+    vi: &PallasVerifierIndex,
+    proof: &PallasProof,
+    public_input: &[Fq],
+    rng: &mut R,
+) -> bool {
+    let group_map = <Pallas as CommitmentCurve>::Map::setup();
+    verify_with_rng::<
+        FULL_ROUNDS,
+        Pallas,
+        WrapBaseSponge,
+        WrapScalarSponge,
+        OpeningProof<Pallas, FULL_ROUNDS>,
         _,
     >(&group_map, vi, proof, public_input, rng)
     .is_ok()
