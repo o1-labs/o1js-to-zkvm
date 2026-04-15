@@ -18,7 +18,9 @@ use poly_commitment::commitment::CommitmentCurve;
 use poly_commitment::ipa::{OpeningProof, SRS};
 
 pub mod pickles_error;
+pub mod pickles_legacy;
 pub mod pickles_lowering;
+pub mod pickles_mina_rust;
 #[cfg(feature = "std")]
 pub mod pickles_parse;
 pub mod pickles_types;
