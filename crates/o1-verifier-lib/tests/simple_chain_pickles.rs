@@ -7,6 +7,8 @@
 
 #![cfg(feature = "std")]
 
+use std::str::FromStr;
+
 use groupmap::GroupMap;
 use ark_ff::{BigInteger, PrimeField};
 use kimchi::curve::KimchiCurve;
@@ -24,6 +26,7 @@ use o1_verifier_lib::{
         MessagesForNextWrapProof as MinaRustMessagesForNextWrapProof,
         Plonk as MinaRustPlonk, PreparedStatement as MinaRustPreparedStatement,
         ProofState as MinaRustProofState, ShiftedValue as MinaRustShiftedValue,
+        make_padded_wrap_proof_from_request as make_mina_rust_padded_wrap_proof_from_request,
     },
     lower_simple_chain_metadata, lower_simple_chain_public_input_plan, lower_simple_chain_request,
     lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle, WrapBaseSponge,
@@ -190,6 +193,23 @@ fn build_mina_rust_step_message(
                 fields.try_into().expect("16 step bulletproof challenges")
             })
             .collect(),
+    }
+}
+
+fn expected_mina_rust_padding_point_hex() -> CurvePointHex {
+    CurvePointHex {
+        x: field_to_hex(
+            Fp::from_str(
+                "8063668238751197448664615329057427953229339439010717262869116690340613895496",
+            )
+            .expect("valid mina-rust padding x-coordinate"),
+        ),
+        y: field_to_hex(
+            Fp::from_str(
+                "2694491010813221541025626495812026140144933943906714931997499229912601205355",
+            )
+            .expect("valid mina-rust padding y-coordinate"),
+        ),
     }
 }
 
@@ -577,6 +597,61 @@ fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     assert_eq!(lowered.proof.prev_challenges[1].chals.len(), 15);
     assert_eq!(lowered.proof.prev_challenges[0].comm.chunks.len(), 1);
     assert_eq!(lowered.proof.prev_challenges[1].comm.chunks.len(), 1);
+}
+
+#[test]
+fn test_mina_rust_padded_wrap_proof_uses_padding_commitment() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
+    let legacy = lower_simple_chain_raw_wrap_artifacts(&request).expect("legacy raw wrap lowering");
+    let padded =
+        make_mina_rust_padded_wrap_proof_from_request(&request).expect("mina-rust padded proof");
+
+    assert_eq!(padded.commitments.w_comm, legacy.proof.commitments.w_comm);
+    assert_eq!(padded.commitments.z_comm, legacy.proof.commitments.z_comm);
+    assert_eq!(padded.commitments.t_comm, legacy.proof.commitments.t_comm);
+    assert_eq!(padded.proof.lr, legacy.proof.proof.lr);
+    assert_eq!(padded.proof.delta, legacy.proof.proof.delta);
+    assert_eq!(padded.proof.sg, legacy.proof.proof.sg);
+    assert_eq!(padded.ft_eval1, legacy.proof.ft_eval1);
+
+    assert_eq!(padded.prev_challenges.len(), 2);
+    assert_eq!(padded.prev_challenges[0].chals.len(), 15);
+    assert_eq!(padded.prev_challenges[1].chals.len(), 15);
+
+    let expected_padding = expected_mina_rust_padding_point_hex();
+    let padding_chunk = padded.prev_challenges[0].comm.chunks[0];
+    assert_eq!(normalize_hex(&field_to_hex(padding_chunk.x)), normalize_hex(&expected_padding.x));
+    assert_eq!(normalize_hex(&field_to_hex(padding_chunk.y)), normalize_hex(&expected_padding.y));
+
+    let actual_chunk = padded.prev_challenges[1].comm.chunks[0];
+    let expected_actual = &metadata.next_step_challenge_polynomial_commitments[0];
+    assert_eq!(normalize_hex(&field_to_hex(actual_chunk.x)), normalize_hex(&expected_actual.x));
+    assert_eq!(normalize_hex(&field_to_hex(actual_chunk.y)), normalize_hex(&expected_actual.y));
+}
+
+#[test]
+fn test_mina_rust_padded_wrap_proof_base_case_uses_padding_commitment() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("base_case")
+        .expect("base_case fixture request");
+    let padded =
+        make_mina_rust_padded_wrap_proof_from_request(&request).expect("mina-rust padded proof");
+
+    assert_eq!(padded.prev_challenges.len(), 2);
+    assert_eq!(padded.prev_challenges[0].chals.len(), 15);
+    assert_eq!(padded.prev_challenges[1].chals.len(), 15);
+
+    let expected_padding = expected_mina_rust_padding_point_hex();
+    let padding_chunk = padded.prev_challenges[0].comm.chunks[0];
+    assert_eq!(normalize_hex(&field_to_hex(padding_chunk.x)), normalize_hex(&expected_padding.x));
+    assert_eq!(normalize_hex(&field_to_hex(padding_chunk.y)), normalize_hex(&expected_padding.y));
 }
 
 #[test]
