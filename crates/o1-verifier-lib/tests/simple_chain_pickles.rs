@@ -24,6 +24,7 @@ use o1_verifier_lib::{
         BranchData as MinaRustBranchData, DeferredValues as MinaRustDeferredValues,
         FieldVectorAppState, MessagesForNextStepProof as MinaRustMessagesForNextStepProof,
         MessagesForNextWrapProof as MinaRustMessagesForNextWrapProof,
+        lower_pickles_with_mina_rust_model,
         Plonk as MinaRustPlonk, PreparedStatement as MinaRustPreparedStatement,
         ProofState as MinaRustProofState, ShiftedValue as MinaRustShiftedValue,
         make_padded_wrap_proof_from_request as make_mina_rust_padded_wrap_proof_from_request,
@@ -491,6 +492,33 @@ fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
             out
         };
         assert_eq!(normalize_hex(&actual_hex), normalize_hex(expected_hex));
+    }
+}
+
+#[test]
+fn test_mina_rust_lowered_wrap_verification_matches_exported_public_input() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let exported = request
+        .exported_wrap_public_input
+        .as_ref()
+        .expect("recursive_step should include exported wrap public input");
+
+    let lowered =
+        lower_pickles_with_mina_rust_model(&request).expect("mina-rust lowering should succeed");
+
+    assert_eq!(lowered.verifier_index.public, 40);
+    assert_eq!(lowered.public_input.len(), 40);
+    assert_eq!(lowered.proof.prev_challenges.len(), 2);
+
+    for (expected, actual) in exported.hex_fields.iter().zip(&lowered.public_input) {
+        assert_eq!(
+            normalize_hex(expected),
+            normalize_hex(&field_to_hex(*actual)),
+        );
     }
 }
 

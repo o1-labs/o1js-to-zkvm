@@ -10,6 +10,7 @@ use alloc::vec::Vec;
 use mina_curves::pasta::{Fp, Fq};
 
 use crate::pickles_types::{CurvePointHex, PlonkFeatureFlags};
+use crate::{PallasProof, PallasVerifierIndex};
 
 /// Minimal local shifted-value wrapper used by prepared-statement packing.
 #[derive(Clone, Debug, PartialEq)]
@@ -80,5 +81,13 @@ pub struct PreparedStatement {
 /// Verification-ready wrap input once all `mina-rust`-aligned lowering is done.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WrapVerificationInput {
+    pub public_input: Vec<Fq>,
+}
+
+/// Fully lowered wrap-verification bundle for the new `mina-rust`-aligned path.
+#[derive(Clone, Debug)]
+pub struct LoweredWrapVerification {
+    pub verifier_index: PallasVerifierIndex,
+    pub proof: PallasProof,
     pub public_input: Vec<Fq>,
 }
