@@ -8,12 +8,18 @@
 #![cfg(feature = "std")]
 
 use groupmap::GroupMap;
+use ark_ff::{BigInteger, PrimeField};
 use kimchi::error::VerifyError;
 use kimchi::verifier::verify_with_rng;
-use mina_curves::pasta::Pallas;
+use mina_curves::pasta::{Fp, Fq, Pallas};
 use mina_poseidon::pasta::FULL_ROUNDS;
 use poly_commitment::commitment::CommitmentCurve;
 use o1_verifier_lib::{
+    pickles_mina_rust::{
+        BranchData as MinaRustBranchData, DeferredValues as MinaRustDeferredValues,
+        Plonk as MinaRustPlonk, PreparedStatement as MinaRustPreparedStatement,
+        ProofState as MinaRustProofState, ShiftedValue as MinaRustShiftedValue,
+    },
     lower_simple_chain_metadata, lower_simple_chain_public_input_plan, lower_simple_chain_request,
     lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle, WrapBaseSponge,
     WrapScalarSponge,
@@ -34,6 +40,51 @@ fn normalize_hex(hex: &str) -> String {
     } else {
         trimmed.to_ascii_uppercase()
     }
+}
+
+fn parse_hex_field_fp(hex: &str) -> Fp {
+    let hex = hex.strip_prefix("0x").unwrap_or(hex);
+    if hex.is_empty() {
+        return Fp::from(0u64);
+    }
+    let hex = if hex.len() % 2 == 0 {
+        hex.to_owned()
+    } else {
+        format!("0{hex}")
+    };
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("valid canonical hex"))
+        .collect::<Vec<_>>();
+    Fp::from_be_bytes_mod_order(&bytes)
+}
+
+fn parse_hex_field_fq(hex: &str) -> Fq {
+    let hex = hex.strip_prefix("0x").unwrap_or(hex);
+    if hex.is_empty() {
+        return Fq::from(0u64);
+    }
+    let hex = if hex.len() % 2 == 0 {
+        hex.to_owned()
+    } else {
+        format!("0{hex}")
+    };
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("valid canonical hex"))
+        .collect::<Vec<_>>();
+    Fq::from_be_bytes_mod_order(&bytes)
+}
+
+fn hex64_limbs_to_u64_array<const N: usize>(limbs: &[String]) -> [u64; N] {
+    let parsed = limbs
+        .iter()
+        .map(|limb| u64::from_str_radix(limb, 16).expect("valid hex64 limb"))
+        .collect::<Vec<_>>();
+    let len = parsed.len();
+    parsed
+        .try_into()
+        .unwrap_or_else(|_| panic!("expected {N} hex64 limbs, got {len}"))
 }
 
 #[test]
@@ -222,6 +273,104 @@ fn test_parse_exported_wrap_public_input_fields() {
         exported.hex_fields[12]
     );
     assert_eq!(exported.fields.len(), 40);
+}
+
+#[test]
+fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
+    let plan = lower_simple_chain_public_input_plan(&request).expect("public-input plan");
+    let oracle = request
+        .exported_wrap_oracle_fields
+        .as_ref()
+        .expect("recursive_step should include exported oracle fields");
+    let exported = request
+        .exported_wrap_public_input
+        .as_ref()
+        .expect("recursive_step should include exported wrap public input");
+
+    let field_to_u64x4_fp = |field: Fp| field.into_bigint().0;
+    let field_to_u64x4_fq = |field: Fq| field.into_bigint().0;
+    let prepared = MinaRustPreparedStatement {
+        proof_state: MinaRustProofState {
+            deferred_values: MinaRustDeferredValues {
+                plonk: MinaRustPlonk {
+                    alpha: hex64_limbs_to_u64_array::<2>(&metadata.plonk.alpha_inner),
+                    beta: hex64_limbs_to_u64_array::<2>(&metadata.plonk.beta),
+                    gamma: hex64_limbs_to_u64_array::<2>(&metadata.plonk.gamma),
+                    zeta: hex64_limbs_to_u64_array::<2>(&metadata.plonk.zeta_inner),
+                    zeta_to_srs_length: MinaRustShiftedValue::new(parse_hex_field_fp(
+                        plan.fields[2].value_hex.as_deref().expect("zeta_to_srs_length"),
+                    )),
+                    zeta_to_domain_size: MinaRustShiftedValue::new(parse_hex_field_fp(
+                        plan.fields[3].value_hex.as_deref().expect("zeta_to_domain_size"),
+                    )),
+                    perm: MinaRustShiftedValue::new(parse_hex_field_fp(
+                        plan.fields[4].value_hex.as_deref().expect("perm"),
+                    )),
+                    lookup: None,
+                    feature_flags: metadata.plonk.feature_flags.clone(),
+                },
+                combined_inner_product: MinaRustShiftedValue::new(parse_hex_field_fp(
+                    &oracle.combined_inner_product_field_hex,
+                )),
+                b: MinaRustShiftedValue::new(parse_hex_field_fp(
+                    plan.fields[1].value_hex.as_deref().expect("b"),
+                )),
+                xi: {
+                    let limbs = field_to_u64x4_fp(parse_hex_field_fp(
+                        plan.fields[9].value_hex.as_deref().expect("xi"),
+                    ));
+                    [limbs[0], limbs[1]]
+                },
+                bulletproof_challenges: plan.fields[13..29]
+                    .iter()
+                    .map(|field| parse_hex_field_fp(field.value_hex.as_deref().expect("bp challenge")))
+                    .collect(),
+                branch_data: MinaRustBranchData {
+                    proofs_verified: metadata.proofs_verified,
+                    domain_log2: metadata.domain_log2,
+                },
+            },
+            sponge_digest_before_evaluations: hex64_limbs_to_u64_array::<4>(
+                &metadata.sponge_digest_before_evaluations,
+            ),
+            messages_for_next_wrap_proof: field_to_u64x4_fq(parse_hex_field_fq(
+                plan.fields[11]
+                    .value_hex
+                    .as_deref()
+                    .expect("messages_for_next_wrap_proof"),
+            )),
+        },
+        messages_for_next_step_proof: field_to_u64x4_fp(parse_hex_field_fp(
+            &oracle.messages_for_next_step_proof_field_hex,
+        )),
+    };
+
+    let packed = prepared
+        .to_public_input(40)
+        .expect("mina-rust prepared statement should pack")
+        .public_input;
+
+    assert_eq!(packed.len(), 40);
+    for (actual, expected_hex) in packed.iter().zip(exported.hex_fields.iter()) {
+        let bytes = actual.into_bigint().to_bytes_be();
+        let actual_hex = if bytes.is_empty() {
+            "0".to_string()
+        } else {
+            let mut out = String::with_capacity(bytes.len() * 2);
+            for byte in bytes {
+                use std::fmt::Write as _;
+                write!(&mut out, "{byte:02X}").expect("write to string");
+            }
+            out
+        };
+        assert_eq!(normalize_hex(&actual_hex), normalize_hex(expected_hex));
+    }
 }
 
 #[test]
