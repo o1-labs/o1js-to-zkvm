@@ -61,7 +61,7 @@ fn parse_curve_point_hex_pallas(point: &CurvePointHex) -> Result<Pallas, Pickles
     Ok(Pallas::new_unchecked(x, y))
 }
 
-fn wrap_bulletproof_challenge_to_field(
+pub(crate) fn wrap_bulletproof_challenge_to_field(
     challenge: &BulletproofChallengeHex,
 ) -> Result<Fq, PicklesError> {
     let packed = challenge
