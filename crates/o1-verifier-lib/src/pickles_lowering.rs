@@ -45,10 +45,11 @@ use serde::Deserialize;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
-    BulletproofChallengeHex, CurvePointHex, CurvePointPairHex, FieldEvalPairHex,
-    NamedFieldEvalSectionHex, NamedPointSectionHex, NamedSectionCount, PicklesVerifyRequest,
-    PlonkDeferredValuesHex, PlonkFeatureFlags, SideLoadedProofMetadata, WrapBulletproofHex,
-    WrapProofBodyHex, WrapProofCommitmentsHex, WrapPublicInputFieldPlan, WrapPublicInputPlan,
+    BulletproofChallengeHex, CurvePointHex, CurvePointPairHex, ExportedRecursionChallenge,
+    FieldEvalPairHex, NamedFieldEvalSectionHex, NamedPointSectionHex, NamedSectionCount,
+    PicklesVerifyRequest, PlonkDeferredValuesHex, PlonkFeatureFlags, SideLoadedProofMetadata,
+    WrapBulletproofHex, WrapProofBodyHex, WrapProofCommitmentsHex, WrapPublicInputFieldPlan,
+    WrapPublicInputPlan,
 };
 use crate::{PallasProof, PallasVerifierIndex, ScalarSponge};
 
@@ -138,6 +139,7 @@ pub fn lower_simple_chain_raw_wrap_artifacts(
     let proof = parse_raw_wrap_proof(
         &raw_wrap_proof.proof_json,
         &metadata,
+        request.exported_backend_prev_challenges.as_deref(),
         &srs,
         verifier_index.prev_challenges,
     )?;
@@ -603,6 +605,7 @@ impl<'de> Deserialize<'de> for RawPointEvaluationsJson {
 fn parse_raw_wrap_proof(
     json: &str,
     metadata: &SideLoadedProofMetadata,
+    exported_prev_challenges: Option<&[ExportedRecursionChallenge]>,
     srs: &SRS<Pallas>,
     expected_prev_challenges: usize,
 ) -> Result<PallasProof, PicklesError> {
@@ -783,11 +786,12 @@ fn parse_raw_wrap_proof(
                 .transpose()?,
         },
         ft_eval1: parse_hex_field_fq(&raw.openings.ft_eval1)?,
-        prev_challenges: materialize_wrap_prev_challenges(
-            metadata,
-            srs,
-            expected_prev_challenges,
-        )?,
+        prev_challenges: match exported_prev_challenges {
+            Some(exported_prev_challenges) => {
+                parse_exported_prev_challenges(exported_prev_challenges, expected_prev_challenges)?
+            }
+            None => materialize_wrap_prev_challenges(metadata, srs, expected_prev_challenges)?,
+        },
     })
 }
 
@@ -885,10 +889,55 @@ fn materialize_wrap_prev_challenges(
 }
 
 #[cfg(feature = "std")]
+fn parse_exported_prev_challenges(
+    exported_prev_challenges: &[ExportedRecursionChallenge],
+    expected_prev_challenges: usize,
+) -> Result<Vec<RecursionChallenge<Pallas>>, PicklesError> {
+    if exported_prev_challenges.len() != expected_prev_challenges {
+        return Err(PicklesError::InvalidJson(format!(
+            "exported backend prev_challenges length mismatch: expected {expected_prev_challenges}, got {}",
+            exported_prev_challenges.len()
+        )));
+    }
+
+    exported_prev_challenges
+        .iter()
+        .map(|exported| {
+            let chals = exported
+                .chals_hex
+                .iter()
+                .map(|hex| parse_hex_field_fq(hex))
+                .collect::<Result<Vec<_>, _>>()?;
+            let comm = parse_poly_comm_hex_pallas(&exported.comm)?;
+            Ok(RecursionChallenge::new(chals, comm))
+        })
+        .collect()
+}
+
+#[cfg(feature = "std")]
 fn parse_curve_point_hex_pallas(point: &CurvePointHex) -> Result<Pallas, PicklesError> {
     let x = parse_hex_field(&point.x)?;
     let y = parse_hex_field(&point.y)?;
     Ok(Pallas::new_unchecked(x, y))
+}
+
+#[cfg(feature = "std")]
+fn parse_poly_comm_hex_pallas(
+    poly_comm: &crate::pickles_types::PolyCommHex,
+) -> Result<PolyComm<Pallas>, PicklesError> {
+    if poly_comm.shifted.is_some() {
+        return Err(PicklesError::InvalidJson(
+            "shifted backend prev_challenge commitments are not supported".into(),
+        ));
+    }
+
+    Ok(PolyComm::new(
+        poly_comm
+            .unshifted
+            .iter()
+            .map(parse_curve_point_hex_pallas)
+            .collect::<Result<Vec<_>, _>>()?,
+    ))
 }
 
 #[cfg(feature = "std")]
