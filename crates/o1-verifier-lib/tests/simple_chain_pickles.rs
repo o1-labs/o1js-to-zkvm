@@ -37,6 +37,7 @@ use o1_verifier_lib::pickles_types::{
     BulletproofChallengeHex, CurvePointHex, PicklesVerifyRequest, SideLoadedProofMetadata,
 };
 use poly_commitment::ipa::OpeningProof;
+use poly_commitment::SRS as _;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -763,6 +764,39 @@ fn test_lower_simple_chain_request_reconstructs_srs() {
         normalize_hex(&field_to_hex(lowered.verifier_index.srs.h.y)),
         normalize_hex(&exported_srs_identity.urs_h.y)
     );
+}
+
+#[test]
+#[ignore = "expensive full wrap lagrange-basis comparison against Mina export"]
+fn test_lower_simple_chain_request_matches_exported_lagrange_commitment_order() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+
+    let lowered = lower_simple_chain_request(&request).expect("lowering should succeed");
+    let exported_srs_identity = request
+        .exported_srs_identity
+        .as_ref()
+        .expect("real fixture should include exported SRS identity");
+
+    let lagrange_basis = lowered
+        .verifier_index
+        .srs
+        .get_lagrange_basis(lowered.verifier_index.domain);
+
+    assert_eq!(
+        lagrange_basis.len(),
+        exported_srs_identity.lagrange_commitments.len()
+    );
+
+    for (actual, expected) in lagrange_basis
+        .iter()
+        .zip(&exported_srs_identity.lagrange_commitments)
+    {
+        assert_poly_comm_matches_exported(actual, expected);
+    }
 }
 
 #[test]

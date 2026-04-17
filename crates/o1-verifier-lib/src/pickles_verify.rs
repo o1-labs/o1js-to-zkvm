@@ -1,26 +1,27 @@
-//! Thin orchestration layer for the future Pickles verifier path.
+//! High-level Pickles verification entrypoints.
 //!
-//! Today this module is mostly a placeholder: it routes through the lowering
-//! layer and then into the wrap-side raw-Kimchi verifier, but the lowering step
-//! is still incomplete for real Mina Pickles proofs.
+//! The intended boundary here sits above raw Kimchi:
+//! 1. expand deferred values
+//! 2. replay the Fiat-Shamir transcript
+//! 3. materialize the wrap proof's recursion accumulator
+//! 4. reconstruct the wrap public input
+//! 5. call the wrap-side Kimchi verifier
+//!
+//! The legacy `Simple_chain` path is still available for comparison, but the
+//! main verifier entrypoint now routes through the newer `mina-rust`-aligned
+//! lowering flow.
 
 use crate::pickles_error::PicklesError;
-use crate::pickles_lowering::lower_simple_chain_request;
+use crate::pickles_mina_rust::verify_pickles_with_mina_rust_model;
 use crate::pickles_types::PicklesVerifyRequest;
 
 /// Attempt to verify a Mina `Simple_chain` Pickles proof.
 ///
-/// This API represents the intended high-level verifier boundary, even though
-/// the current lowering step still returns `LoweringNotImplemented`.
+/// This entrypoint now goes through the `mina-rust`-aligned Pickles lowering
+/// flow before handing off to the wrap-side Kimchi verifier.
 pub fn verify_simple_chain_pickles<R: rand::RngCore + rand::CryptoRng>(
     request: &PicklesVerifyRequest,
     rng: &mut R,
 ) -> Result<bool, PicklesError> {
-    let lowered = lower_simple_chain_request(request)?;
-    Ok(crate::verify_wrap_kimchi_proof(
-        &lowered.verifier_index,
-        &lowered.proof,
-        &lowered.public_input,
-        rng,
-    ))
+    verify_pickles_with_mina_rust_model(request, rng)
 }
