@@ -152,6 +152,7 @@ pub fn lower_simple_chain_raw_wrap_artifacts(
     })
 }
 
+#[cfg(feature = "std")]
 fn reconstruct_wrap_srs(max_poly_size: usize) -> Result<SRS<Pallas>, PicklesError> {
     if max_poly_size == 0 {
         return Err(PicklesError::InvalidJson(

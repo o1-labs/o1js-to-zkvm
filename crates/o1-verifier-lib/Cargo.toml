@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-std = ["serde_json", "base64", "ark-ff", "ark-poly", "ark-ec", "sexp", "blake2"]
+std = ["serde_json", "base64", "ark-poly", "sexp", "blake2"]
 
 [dependencies]
 kimchi = { workspace = true }
@@ -15,14 +15,14 @@ groupmap = { workspace = true }
 serde = { workspace = true }
 rmp-serde = { version = "1", default-features = false }
 ark-serialize = { version = "0.5", default-features = false }
+ark-ff = { version = "0.5" }
+ark-ec = { version = "0.5" }
 rand = { version = "0.8", default-features = false }
 
 # std-only deps for circuit JSON parsing
 serde_json = { version = "1", optional = true }
 base64 = { version = "0.13", optional = true }
-ark-ff = { version = "0.5", optional = true }
 ark-poly = { version = "0.5", optional = true }
-ark-ec = { version = "0.5", optional = true }
 sexp = { version = "1", optional = true }
 blake2 = { version = "0.10", optional = true }
 
@@ -36,4 +36,12 @@ required-features = ["std"]
 
 [[test]]
 name = "simple_chain_pickles"
+required-features = ["std"]
+
+[[bin]]
+name = "pickles_inspect"
+required-features = ["std"]
+
+[[bin]]
+name = "compare_wrap_srs"
 required-features = ["std"]
