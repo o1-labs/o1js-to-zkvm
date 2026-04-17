@@ -321,6 +321,40 @@ fn parse_field_eval_pair_hex(
     })
 }
 
+fn parse_optional_field_eval_pair_hex(
+    value: &Value,
+    field_name: &'static str,
+) -> Result<Option<FieldEvalPairHex>, PicklesError> {
+    match value {
+        Value::Null => Ok(None),
+        other => parse_field_eval_pair_hex(other, field_name).map(Some),
+    }
+}
+
+fn parse_field_eval_pair_hex_list(
+    value: &Value,
+    field_name: &'static str,
+) -> Result<Vec<FieldEvalPairHex>, PicklesError> {
+    value
+        .as_array()
+        .ok_or_else(|| PicklesError::InvalidJson(format!("{field_name}: expected array")))?
+        .iter()
+        .map(|item| parse_field_eval_pair_hex(item, field_name))
+        .collect()
+}
+
+fn parse_optional_field_eval_pair_hex_list(
+    value: &Value,
+    field_name: &'static str,
+) -> Result<Vec<Option<FieldEvalPairHex>>, PicklesError> {
+    value
+        .as_array()
+        .ok_or_else(|| PicklesError::InvalidJson(format!("{field_name}: expected array")))?
+        .iter()
+        .map(|item| parse_optional_field_eval_pair_hex(item, field_name))
+        .collect()
+}
+
 /// Parse the small backend-evaluation probe emitted next to a fixture.
 fn parse_exported_backend_evals_probe(
     value: &Value,
@@ -338,11 +372,46 @@ fn parse_exported_backend_evals_probe(
             "final_backend_evals_probe_json",
         )
     };
+    let parse_optional_named =
+        |name: &'static str| -> Result<Option<FieldEvalPairHex>, PicklesError> {
+            parse_optional_field_eval_pair_hex(
+                object.get(name).ok_or_else(|| {
+                    PicklesError::InvalidJson(format!(
+                        "final_backend_evals_probe_json: missing {name}"
+                    ))
+                })?,
+                "final_backend_evals_probe_json",
+            )
+        };
 
     Ok(ExportedBackendEvalsProbe {
+        witness_columns: parse_field_eval_pair_hex_list(
+            object.get("witness_columns").ok_or_else(|| {
+                PicklesError::InvalidJson(
+                    "final_backend_evals_probe_json: missing witness_columns".into(),
+                )
+            })?,
+            "final_backend_evals_probe_json.witness_columns",
+        )?,
         w0: parse_named("w0")?,
         z: parse_named("z")?,
+        permutation_columns: parse_field_eval_pair_hex_list(
+            object.get("permutation_columns").ok_or_else(|| {
+                PicklesError::InvalidJson(
+                    "final_backend_evals_probe_json: missing permutation_columns".into(),
+                )
+            })?,
+            "final_backend_evals_probe_json.permutation_columns",
+        )?,
         s0: parse_named("s0")?,
+        coefficients: parse_field_eval_pair_hex_list(
+            object.get("coefficients").ok_or_else(|| {
+                PicklesError::InvalidJson(
+                    "final_backend_evals_probe_json: missing coefficients".into(),
+                )
+            })?,
+            "final_backend_evals_probe_json.coefficients",
+        )?,
         coeff0: parse_named("coeff0")?,
         generic_selector: parse_named("generic_selector")?,
         poseidon_selector: parse_named("poseidon_selector")?,
@@ -350,6 +419,30 @@ fn parse_exported_backend_evals_probe(
         mul_selector: parse_named("mul_selector")?,
         emul_selector: parse_named("emul_selector")?,
         endomul_scalar_selector: parse_named("endomul_scalar_selector")?,
+        range_check0_selector: parse_optional_named("range_check0_selector")?,
+        range_check1_selector: parse_optional_named("range_check1_selector")?,
+        foreign_field_add_selector: parse_optional_named("foreign_field_add_selector")?,
+        foreign_field_mul_selector: parse_optional_named("foreign_field_mul_selector")?,
+        xor_selector: parse_optional_named("xor_selector")?,
+        rot_selector: parse_optional_named("rot_selector")?,
+        lookup_aggregation: parse_optional_named("lookup_aggregation")?,
+        lookup_table: parse_optional_named("lookup_table")?,
+        lookup_sorted: parse_optional_field_eval_pair_hex_list(
+            object.get("lookup_sorted").ok_or_else(|| {
+                PicklesError::InvalidJson(
+                    "final_backend_evals_probe_json: missing lookup_sorted".into(),
+                )
+            })?,
+            "final_backend_evals_probe_json.lookup_sorted",
+        )?,
+        runtime_lookup_table: parse_optional_named("runtime_lookup_table")?,
+        runtime_lookup_table_selector: parse_optional_named("runtime_lookup_table_selector")?,
+        xor_lookup_selector: parse_optional_named("xor_lookup_selector")?,
+        lookup_gate_lookup_selector: parse_optional_named("lookup_gate_lookup_selector")?,
+        range_check_lookup_selector: parse_optional_named("range_check_lookup_selector")?,
+        foreign_field_mul_lookup_selector: parse_optional_named(
+            "foreign_field_mul_lookup_selector",
+        )?,
     })
 }
 

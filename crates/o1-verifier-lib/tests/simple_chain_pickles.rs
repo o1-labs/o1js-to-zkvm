@@ -513,6 +513,167 @@ fn assert_point_evaluations_match_probe(
     }
 }
 
+fn assert_wrap_evals_match_backend_probe(
+    evals: &kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<Vec<Fq>>>,
+    probe: &o1_verifier_lib::pickles_types::ExportedBackendEvalsProbe,
+) {
+    assert_eq!(evals.w.len(), probe.witness_columns.len(), "witness_columns length mismatch");
+    for (index, (actual, expected)) in evals.w.iter().zip(&probe.witness_columns).enumerate() {
+        assert_point_evaluations_match_probe(actual, expected, &format!("w[{index}]"));
+    }
+    assert_point_evaluations_match_probe(&evals.w[0], &probe.w0, "w0");
+    assert_point_evaluations_match_probe(&evals.z, &probe.z, "z");
+    assert_eq!(
+        evals.s.len(),
+        probe.permutation_columns.len(),
+        "permutation_columns length mismatch"
+    );
+    for (index, (actual, expected)) in evals
+        .s
+        .iter()
+        .zip(&probe.permutation_columns)
+        .enumerate()
+    {
+        assert_point_evaluations_match_probe(actual, expected, &format!("s[{index}]"));
+    }
+    assert_point_evaluations_match_probe(&evals.s[0], &probe.s0, "s0");
+    assert_eq!(
+        evals.coefficients.len(),
+        probe.coefficients.len(),
+        "coefficients length mismatch"
+    );
+    for (index, (actual, expected)) in evals
+        .coefficients
+        .iter()
+        .zip(&probe.coefficients)
+        .enumerate()
+    {
+        assert_point_evaluations_match_probe(actual, expected, &format!("coefficients[{index}]"));
+    }
+    assert_point_evaluations_match_probe(&evals.coefficients[0], &probe.coeff0, "coeff0");
+    assert_point_evaluations_match_probe(
+        &evals.generic_selector,
+        &probe.generic_selector,
+        "generic_selector",
+    );
+    assert_point_evaluations_match_probe(
+        &evals.poseidon_selector,
+        &probe.poseidon_selector,
+        "poseidon_selector",
+    );
+    assert_point_evaluations_match_probe(
+        &evals.complete_add_selector,
+        &probe.complete_add_selector,
+        "complete_add_selector",
+    );
+    assert_point_evaluations_match_probe(&evals.mul_selector, &probe.mul_selector, "mul_selector");
+    assert_point_evaluations_match_probe(
+        &evals.emul_selector,
+        &probe.emul_selector,
+        "emul_selector",
+    );
+    assert_point_evaluations_match_probe(
+        &evals.endomul_scalar_selector,
+        &probe.endomul_scalar_selector,
+        "endomul_scalar_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.range_check0_selector.as_ref(),
+        probe.range_check0_selector.as_ref(),
+        "range_check0_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.range_check1_selector.as_ref(),
+        probe.range_check1_selector.as_ref(),
+        "range_check1_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.foreign_field_add_selector.as_ref(),
+        probe.foreign_field_add_selector.as_ref(),
+        "foreign_field_add_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.foreign_field_mul_selector.as_ref(),
+        probe.foreign_field_mul_selector.as_ref(),
+        "foreign_field_mul_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.xor_selector.as_ref(),
+        probe.xor_selector.as_ref(),
+        "xor_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.rot_selector.as_ref(),
+        probe.rot_selector.as_ref(),
+        "rot_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.lookup_aggregation.as_ref(),
+        probe.lookup_aggregation.as_ref(),
+        "lookup_aggregation",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.lookup_table.as_ref(),
+        probe.lookup_table.as_ref(),
+        "lookup_table",
+    );
+    assert_eq!(
+        evals.lookup_sorted.len(),
+        probe.lookup_sorted.len(),
+        "lookup_sorted length mismatch"
+    );
+    for (index, (actual, expected)) in evals.lookup_sorted.iter().zip(&probe.lookup_sorted).enumerate() {
+        assert_optional_point_evaluations_match_probe(
+            actual.as_ref(),
+            expected.as_ref(),
+            &format!("lookup_sorted[{index}]"),
+        );
+    }
+    assert_optional_point_evaluations_match_probe(
+        evals.runtime_lookup_table.as_ref(),
+        probe.runtime_lookup_table.as_ref(),
+        "runtime_lookup_table",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.runtime_lookup_table_selector.as_ref(),
+        probe.runtime_lookup_table_selector.as_ref(),
+        "runtime_lookup_table_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.xor_lookup_selector.as_ref(),
+        probe.xor_lookup_selector.as_ref(),
+        "xor_lookup_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.lookup_gate_lookup_selector.as_ref(),
+        probe.lookup_gate_lookup_selector.as_ref(),
+        "lookup_gate_lookup_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.range_check_lookup_selector.as_ref(),
+        probe.range_check_lookup_selector.as_ref(),
+        "range_check_lookup_selector",
+    );
+    assert_optional_point_evaluations_match_probe(
+        evals.foreign_field_mul_lookup_selector.as_ref(),
+        probe.foreign_field_mul_lookup_selector.as_ref(),
+        "foreign_field_mul_lookup_selector",
+    );
+}
+
+fn assert_optional_point_evaluations_match_probe(
+    actual: Option<&kimchi::proof::PointEvaluations<Vec<Fq>>>,
+    expected: Option<&o1_verifier_lib::pickles_types::FieldEvalPairHex>,
+    label: &str,
+) {
+    match (actual, expected) {
+        (Some(actual), Some(expected)) => assert_point_evaluations_match_probe(actual, expected, label),
+        (None, None) => {}
+        (Some(_), None) => panic!("{label}: actual value present, expected none"),
+        (None, Some(_)) => panic!("{label}: actual value absent, expected probe"),
+    }
+}
+
 #[test]
 fn test_parse_simple_chain_bundle() {
     let bundle = parse_simple_chain_bundle(SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -531,6 +692,39 @@ fn test_parse_simple_chain_bundle() {
         .expect("recursive_step fixture");
     assert_eq!(recursive_step.statement.to_fields().len(), 1);
     assert!(!recursive_step.proof.0.is_empty());
+}
+
+#[test]
+fn test_parse_expanded_backend_eval_probe_shape() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let recursive_step = bundle
+        .fixture("recursive_step")
+        .expect("recursive_step fixture");
+    let probe = recursive_step
+        .exported_backend_evals_probe
+        .as_ref()
+        .expect("recursive_step should include backend eval probe");
+
+    assert_eq!(probe.witness_columns.len(), 15);
+    assert_eq!(probe.coefficients.len(), 15);
+    assert_eq!(probe.permutation_columns.len(), 6);
+    assert_eq!(probe.lookup_sorted.len(), 5);
+    assert!(probe.range_check0_selector.is_none());
+    assert!(probe.range_check1_selector.is_none());
+    assert!(probe.foreign_field_add_selector.is_none());
+    assert!(probe.foreign_field_mul_selector.is_none());
+    assert!(probe.xor_selector.is_none());
+    assert!(probe.rot_selector.is_none());
+    assert!(probe.lookup_aggregation.is_none());
+    assert!(probe.lookup_table.is_none());
+    assert!(probe.lookup_sorted.iter().all(Option::is_none));
+    assert!(probe.runtime_lookup_table.is_none());
+    assert!(probe.runtime_lookup_table_selector.is_none());
+    assert!(probe.xor_lookup_selector.is_none());
+    assert!(probe.lookup_gate_lookup_selector.is_none());
+    assert!(probe.range_check_lookup_selector.is_none());
+    assert!(probe.foreign_field_mul_lookup_selector.is_none());
 }
 
 #[test]
@@ -971,44 +1165,7 @@ fn test_lowered_recursive_wrap_evals_match_exported_backend_probe() {
     let lowered =
         lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
 
-    assert_point_evaluations_match_probe(&lowered.proof.evals.w[0], &probe.w0, "w0");
-    assert_point_evaluations_match_probe(&lowered.proof.evals.z, &probe.z, "z");
-    assert_point_evaluations_match_probe(&lowered.proof.evals.s[0], &probe.s0, "s0");
-    assert_point_evaluations_match_probe(
-        &lowered.proof.evals.coefficients[0],
-        &probe.coeff0,
-        "coeff0",
-    );
-    assert_point_evaluations_match_probe(
-        &lowered.proof.evals.generic_selector,
-        &probe.generic_selector,
-        "generic_selector",
-    );
-    assert_point_evaluations_match_probe(
-        &lowered.proof.evals.poseidon_selector,
-        &probe.poseidon_selector,
-        "poseidon_selector",
-    );
-    assert_point_evaluations_match_probe(
-        &lowered.proof.evals.complete_add_selector,
-        &probe.complete_add_selector,
-        "complete_add_selector",
-    );
-    assert_point_evaluations_match_probe(
-        &lowered.proof.evals.mul_selector,
-        &probe.mul_selector,
-        "mul_selector",
-    );
-    assert_point_evaluations_match_probe(
-        &lowered.proof.evals.emul_selector,
-        &probe.emul_selector,
-        "emul_selector",
-    );
-    assert_point_evaluations_match_probe(
-        &lowered.proof.evals.endomul_scalar_selector,
-        &probe.endomul_scalar_selector,
-        "endomul_scalar_selector",
-    );
+    assert_wrap_evals_match_backend_probe(&lowered.proof.evals, probe);
 }
 
 #[test]
@@ -1053,14 +1210,7 @@ fn test_lowered_base_case_wrap_evals_match_exported_backend_probe() {
     let lowered = lower_simple_chain_raw_wrap_artifacts(&request)
         .expect("base_case raw wrap artifacts should parse");
 
-    assert_point_evaluations_match_probe(&lowered.proof.evals.w[0], &probe.w0, "w0");
-    assert_point_evaluations_match_probe(&lowered.proof.evals.z, &probe.z, "z");
-    assert_point_evaluations_match_probe(&lowered.proof.evals.s[0], &probe.s0, "s0");
-    assert_point_evaluations_match_probe(
-        &lowered.proof.evals.coefficients[0],
-        &probe.coeff0,
-        "coeff0",
-    );
+    assert_wrap_evals_match_backend_probe(&lowered.proof.evals, probe);
 }
 
 #[test]

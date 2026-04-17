@@ -229,9 +229,12 @@ pub struct ExportedWrapOracleFields {
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// Small probe of Mina's final backend wrap-proof evaluations.
 pub struct ExportedBackendEvalsProbe {
+    pub witness_columns: Vec<FieldEvalPairHex>,
     pub w0: FieldEvalPairHex,
     pub z: FieldEvalPairHex,
+    pub permutation_columns: Vec<FieldEvalPairHex>,
     pub s0: FieldEvalPairHex,
+    pub coefficients: Vec<FieldEvalPairHex>,
     pub coeff0: FieldEvalPairHex,
     pub generic_selector: FieldEvalPairHex,
     pub poseidon_selector: FieldEvalPairHex,
@@ -239,6 +242,21 @@ pub struct ExportedBackendEvalsProbe {
     pub mul_selector: FieldEvalPairHex,
     pub emul_selector: FieldEvalPairHex,
     pub endomul_scalar_selector: FieldEvalPairHex,
+    pub range_check0_selector: Option<FieldEvalPairHex>,
+    pub range_check1_selector: Option<FieldEvalPairHex>,
+    pub foreign_field_add_selector: Option<FieldEvalPairHex>,
+    pub foreign_field_mul_selector: Option<FieldEvalPairHex>,
+    pub xor_selector: Option<FieldEvalPairHex>,
+    pub rot_selector: Option<FieldEvalPairHex>,
+    pub lookup_aggregation: Option<FieldEvalPairHex>,
+    pub lookup_table: Option<FieldEvalPairHex>,
+    pub lookup_sorted: Vec<Option<FieldEvalPairHex>>,
+    pub runtime_lookup_table: Option<FieldEvalPairHex>,
+    pub runtime_lookup_table_selector: Option<FieldEvalPairHex>,
+    pub xor_lookup_selector: Option<FieldEvalPairHex>,
+    pub lookup_gate_lookup_selector: Option<FieldEvalPairHex>,
+    pub range_check_lookup_selector: Option<FieldEvalPairHex>,
+    pub foreign_field_mul_lookup_selector: Option<FieldEvalPairHex>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
