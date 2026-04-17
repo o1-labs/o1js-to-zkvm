@@ -69,6 +69,7 @@ struct RawRustInputs {
     side_loaded_proof_base64: String,
 }
 
+/// Parse decimal `Fp` strings from the exporter bundle.
 fn parse_field_strings(fields: &[String]) -> Result<Vec<Fp>, PicklesError> {
     fields
         .iter()
@@ -78,10 +79,12 @@ fn parse_field_strings(fields: &[String]) -> Result<Vec<Fp>, PicklesError> {
         .collect()
 }
 
+/// Decode one base64-encoded exporter field into raw bytes.
 fn decode_base64(field_name: &'static str, value: &str) -> Result<Vec<u8>, PicklesError> {
     base64::decode(value).map_err(|_| PicklesError::InvalidBase64(field_name))
 }
 
+/// Parse one canonical hex-encoded wrap-field element.
 fn parse_hex_field(hex: &str) -> Result<Fq, PicklesError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     if hex.is_empty() {
@@ -104,10 +107,12 @@ fn parse_hex_field(hex: &str) -> Result<Fq, PicklesError> {
     Ok(Fq::from_be_bytes_mod_order(&bytes))
 }
 
+/// Parse a vector of canonical wrap-field hex strings.
 fn parse_hex_field_strings(fields: &[String]) -> Result<Vec<Fq>, PicklesError> {
     fields.iter().map(|field| parse_hex_field(field)).collect()
 }
 
+/// Parse one affine curve point exported as `[x, y]` hex strings.
 fn parse_curve_point_hex(value: &Value, field_name: &'static str) -> Result<CurvePointHex, PicklesError> {
     let coords = value
         .as_array()
@@ -130,6 +135,7 @@ fn parse_curve_point_hex(value: &Value, field_name: &'static str) -> Result<Curv
     })
 }
 
+/// Parse an optional affine point, accepting `null` and `"infinity"`.
 fn parse_optional_curve_point_hex(
     value: &Value,
     field_name: &'static str,
@@ -141,6 +147,7 @@ fn parse_optional_curve_point_hex(
     }
 }
 
+/// Parse Mina's JSON form of a polynomial commitment.
 fn parse_poly_comm_hex(value: &Value, field_name: &'static str) -> Result<PolyCommHex, PicklesError> {
     let object = value.as_object().ok_or_else(|| {
         PicklesError::InvalidJson(format!("{field_name}: expected object"))
@@ -161,6 +168,7 @@ fn parse_poly_comm_hex(value: &Value, field_name: &'static str) -> Result<PolyCo
     Ok(PolyCommHex { unshifted, shifted })
 }
 
+/// Parse Mina-exported backend recursion challenges.
 fn parse_exported_prev_challenges(
     value: &Value,
 ) -> Result<Vec<ExportedRecursionChallenge>, PicklesError> {
@@ -209,6 +217,7 @@ fn parse_exported_prev_challenges(
         .collect()
 }
 
+/// Parse the exported SRS identity bundle used for Rust/Mina comparisons.
 fn parse_exported_srs_identity(value: &Value) -> Result<ExportedSrsIdentity, PicklesError> {
     let object = value.as_object().ok_or_else(|| {
         PicklesError::InvalidJson("srs_identity: expected object".into())
@@ -248,6 +257,7 @@ fn parse_exported_srs_identity(value: &Value) -> Result<ExportedSrsIdentity, Pic
     })
 }
 
+/// Parse sampled ordered Lagrange commitments from the exporter.
 fn parse_lagrange_commitment_samples(
     value: &Value,
 ) -> Result<Vec<ExportedLagrangeCommitmentSample>, PicklesError> {
@@ -283,6 +293,7 @@ fn parse_lagrange_commitment_samples(
         .collect()
 }
 
+/// Parse one `(zeta, zeta_omega)` field-evaluation pair from backend probes.
 fn parse_field_eval_pair_hex(
     value: &Value,
     field_name: &'static str,
@@ -310,6 +321,7 @@ fn parse_field_eval_pair_hex(
     })
 }
 
+/// Parse the small backend-evaluation probe emitted next to a fixture.
 fn parse_exported_backend_evals_probe(
     value: &Value,
 ) -> Result<ExportedBackendEvalsProbe, PicklesError> {

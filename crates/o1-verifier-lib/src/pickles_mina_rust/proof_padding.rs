@@ -27,6 +27,8 @@ use crate::pickles_types::{
 };
 use crate::PallasProof;
 
+/// Return the fixed padding commitment used by `mina-rust` when a recursive
+/// proof has fewer challenge-polynomial commitments than the verifier expects.
 fn challenge_polynomial_commitment_padding() -> PolyComm<Pallas> {
     let x = Fp::from_str("8063668238751197448664615329057427953229339439010717262869116690340613895496")
         .expect("valid mina-rust padding x-coordinate");
@@ -36,6 +38,7 @@ fn challenge_polynomial_commitment_padding() -> PolyComm<Pallas> {
     PolyComm::new(vec![Pallas::new_unchecked(x, y)])
 }
 
+/// Parse one canonical hex `Fp` value used in exporter-side curve coordinates.
 fn parse_hex_field_fp(hex: &str) -> Result<Fp, PicklesError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     if hex.is_empty() {
@@ -55,12 +58,15 @@ fn parse_hex_field_fp(hex: &str) -> Result<Fp, PicklesError> {
     Ok(Fp::from_be_bytes_mod_order(&bytes))
 }
 
+/// Decode one exported affine Pallas point from hex coordinates.
 fn parse_curve_point_hex_pallas(point: &CurvePointHex) -> Result<Pallas, PicklesError> {
     let x = parse_hex_field_fp(&point.x)?;
     let y = parse_hex_field_fp(&point.y)?;
     Ok(Pallas::new_unchecked(x, y))
 }
 
+/// Convert one exported wrap bulletproof challenge into the field element used
+/// by the backend recursion accumulator.
 pub(crate) fn wrap_bulletproof_challenge_to_field(
     challenge: &BulletproofChallengeHex,
 ) -> Result<Fq, PicklesError> {

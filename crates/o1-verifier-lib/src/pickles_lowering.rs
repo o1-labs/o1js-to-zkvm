@@ -153,6 +153,12 @@ pub fn lower_simple_chain_raw_wrap_artifacts(
 }
 
 #[cfg(feature = "std")]
+/// Rebuild the wrap-side SRS deterministically from the verifier index size.
+///
+/// This mirrors the current Rust-side assumption about how Mina's wrap URS is
+/// generated. It is useful for debugging and proof lowering, but it remains a
+/// potential source of mismatch until the reconstructed SRS is shown to match
+/// Mina's ordered basis and opening-proof behavior exactly.
 fn reconstruct_wrap_srs(max_poly_size: usize) -> Result<SRS<Pallas>, PicklesError> {
     if max_poly_size == 0 {
         return Err(PicklesError::InvalidJson(
@@ -184,6 +190,8 @@ fn reconstruct_wrap_srs(max_poly_size: usize) -> Result<SRS<Pallas>, PicklesErro
 }
 
 #[cfg(feature = "std")]
+/// Map Blake2b output bytes onto a Pallas group element using the same
+/// group-map based derivation that Kimchi uses for SRS generation.
 fn point_of_random_bytes_pallas(
     map: &<Pallas as CommitmentCurve>::Map,
     random_bytes: &[u8],
@@ -308,6 +316,11 @@ impl<'de> Deserialize<'de> for RawWrapPointJson {
 }
 
 #[cfg(feature = "std")]
+/// Parse Mina's exported raw wrap verifier JSON into a `PallasVerifierIndex`.
+///
+/// This is the low-level bridge from exporter artifacts to the Kimchi verifier
+/// types used by the Rust core. It reconstructs fields that are implicit or
+/// normalized differently in the JSON view.
 fn parse_raw_wrap_verifier_index(json: &str) -> Result<PallasVerifierIndex, PicklesError> {
     let raw: RawWrapVerifierIndexJson = serde_json::from_str(json)
         .map_err(|err| PicklesError::InvalidJson(format!("raw wrap verifier index: {err}")))?;
@@ -603,6 +616,10 @@ impl<'de> Deserialize<'de> for RawPointEvaluationsJson {
 }
 
 #[cfg(feature = "std")]
+/// Parse Mina's exported raw wrap proof JSON into a `PallasProof`.
+///
+/// This consumes the backend proof body plus the currently available recursion
+/// artifacts and produces the proof object Rust can hand to Kimchi.
 fn parse_raw_wrap_proof(
     json: &str,
     metadata: &SideLoadedProofMetadata,
