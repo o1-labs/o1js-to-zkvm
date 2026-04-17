@@ -14,10 +14,11 @@ use serde_json::Value;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
-    CurvePointHex, ExportedRawWrapProof, ExportedRawWrapVerifier, ExportedRecursionChallenge,
-    ExportedSrsIdentity, ExportedWrapOracleFields, ExportedWrapPublicInput, PicklesVerifyRequest,
-    PolyCommHex, SideLoadedProofBytes, SideLoadedVkBytes, SimpleChainFixture,
-    SimpleChainFixtureBundle, SimpleChainStatement,
+    CurvePointHex, ExportedBackendEvalsProbe, ExportedLagrangeCommitmentSample,
+    ExportedRawWrapProof, ExportedRawWrapVerifier, ExportedRecursionChallenge,
+    ExportedSrsIdentity, ExportedWrapOracleFields, ExportedWrapPublicInput, FieldEvalPairHex,
+    PicklesVerifyRequest, PolyCommHex, SideLoadedProofBytes, SideLoadedVkBytes,
+    SimpleChainFixture, SimpleChainFixtureBundle, SimpleChainStatement,
 };
 
 #[derive(Deserialize)]
@@ -63,6 +64,8 @@ struct RawRustInputs {
     raw_wrap_proof_json: Option<Value>,
     #[serde(default)]
     final_backend_prev_challenges_json: Option<Value>,
+    #[serde(default)]
+    final_backend_evals_probe_json: Option<Value>,
     side_loaded_proof_base64: String,
 }
 
@@ -231,11 +234,110 @@ fn parse_exported_srs_identity(value: &Value) -> Result<ExportedSrsIdentity, Pic
         .iter()
         .map(|value| parse_poly_comm_hex(value, "srs_identity.lagrange_commitments"))
         .collect::<Result<Vec<_>, _>>()?;
+    let lagrange_commitment_samples = object
+        .get("lagrange_commitment_samples")
+        .map(parse_lagrange_commitment_samples)
+        .transpose()?
+        .unwrap_or_default();
 
     Ok(ExportedSrsIdentity {
         urs_h,
         lagrange_commitments_domain_size,
         lagrange_commitments,
+        lagrange_commitment_samples,
+    })
+}
+
+fn parse_lagrange_commitment_samples(
+    value: &Value,
+) -> Result<Vec<ExportedLagrangeCommitmentSample>, PicklesError> {
+    let items = value.as_array().ok_or_else(|| {
+        PicklesError::InvalidJson("srs_identity.lagrange_commitment_samples: expected array".into())
+    })?;
+
+    items.iter()
+        .map(|item| {
+            let object = item.as_object().ok_or_else(|| {
+                PicklesError::InvalidJson(
+                    "srs_identity.lagrange_commitment_samples: expected object".into(),
+                )
+            })?;
+            let index = object
+                .get("index")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    PicklesError::InvalidJson(
+                        "srs_identity.lagrange_commitment_samples: missing index".into(),
+                    )
+                })? as usize;
+            let commitment = parse_poly_comm_hex(
+                object.get("commitment").ok_or_else(|| {
+                    PicklesError::InvalidJson(
+                        "srs_identity.lagrange_commitment_samples: missing commitment".into(),
+                    )
+                })?,
+                "srs_identity.lagrange_commitment_samples.commitment",
+            )?;
+            Ok(ExportedLagrangeCommitmentSample { index, commitment })
+        })
+        .collect()
+}
+
+fn parse_field_eval_pair_hex(
+    value: &Value,
+    field_name: &'static str,
+) -> Result<FieldEvalPairHex, PicklesError> {
+    let object = value.as_object().ok_or_else(|| {
+        PicklesError::InvalidJson(format!("{field_name}: expected object"))
+    })?;
+    let parse_array = |name: &str| -> Result<Vec<String>, PicklesError> {
+        object
+            .get(name)
+            .and_then(Value::as_array)
+            .ok_or_else(|| PicklesError::InvalidJson(format!("{field_name}: missing {name}")))?
+            .iter()
+            .map(|value| {
+                value.as_str().map(ToString::to_string).ok_or_else(|| {
+                    PicklesError::InvalidJson(format!("{field_name}: invalid {name} value"))
+                })
+            })
+            .collect()
+    };
+
+    Ok(FieldEvalPairHex {
+        zeta: parse_array("zeta")?,
+        zeta_omega: parse_array("zeta_omega")?,
+    })
+}
+
+fn parse_exported_backend_evals_probe(
+    value: &Value,
+) -> Result<ExportedBackendEvalsProbe, PicklesError> {
+    let object = value.as_object().ok_or_else(|| {
+        PicklesError::InvalidJson("final_backend_evals_probe_json: expected object".into())
+    })?;
+    let parse_named = |name: &'static str| -> Result<FieldEvalPairHex, PicklesError> {
+        parse_field_eval_pair_hex(
+            object.get(name).ok_or_else(|| {
+                PicklesError::InvalidJson(format!(
+                    "final_backend_evals_probe_json: missing {name}"
+                ))
+            })?,
+            "final_backend_evals_probe_json",
+        )
+    };
+
+    Ok(ExportedBackendEvalsProbe {
+        w0: parse_named("w0")?,
+        z: parse_named("z")?,
+        s0: parse_named("s0")?,
+        coeff0: parse_named("coeff0")?,
+        generic_selector: parse_named("generic_selector")?,
+        poseidon_selector: parse_named("poseidon_selector")?,
+        complete_add_selector: parse_named("complete_add_selector")?,
+        mul_selector: parse_named("mul_selector")?,
+        emul_selector: parse_named("emul_selector")?,
+        endomul_scalar_selector: parse_named("endomul_scalar_selector")?,
     })
 }
 
@@ -322,6 +424,11 @@ pub fn parse_simple_chain_bundle(
                 .final_backend_prev_challenges_json
                 .map(|json| parse_exported_prev_challenges(&json))
                 .transpose()?;
+            let exported_backend_evals_probe = fixture
+                .rust_inputs
+                .final_backend_evals_probe_json
+                .map(|json| parse_exported_backend_evals_probe(&json))
+                .transpose()?;
 
             Ok(SimpleChainFixture {
                 name: fixture.name,
@@ -331,6 +438,7 @@ pub fn parse_simple_chain_bundle(
                 exported_wrap_oracle_fields,
                 exported_raw_wrap_proof,
                 exported_backend_prev_challenges,
+                exported_backend_evals_probe,
             })
         })
         .collect::<Result<Vec<_>, PicklesError>>()?;

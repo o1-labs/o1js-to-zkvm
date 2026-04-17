@@ -89,6 +89,7 @@ fn main() -> ExitCode {
         .next()
         .unwrap_or_else(|| "fixtures/simple_chain_real_bundle.json".into());
     let fixture_name = args.next().unwrap_or_else(|| "recursive_step".into());
+    let mode = args.next().unwrap_or_else(|| "sampled".into());
 
     let bundle_json = match std::fs::read_to_string(&bundle_path) {
         Ok(json) => json,
@@ -135,36 +136,67 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    let lagrange_basis = lowered
-        .verifier_index
-        .srs
-        .get_lagrange_basis(lowered.verifier_index.domain);
+    match mode.as_str() {
+        "full" => {
+            let lagrange_basis = lowered
+                .verifier_index
+                .srs
+                .get_lagrange_basis(lowered.verifier_index.domain);
+            if lagrange_basis.len() != exported_srs_identity.lagrange_commitments.len() {
+                eprintln!(
+                    "lagrange length mismatch: actual={}, expected={}",
+                    lagrange_basis.len(),
+                    exported_srs_identity.lagrange_commitments.len()
+                );
+                return ExitCode::from(3);
+            }
 
-    if lagrange_basis.len() != exported_srs_identity.lagrange_commitments.len() {
-        eprintln!(
-            "lagrange length mismatch: actual={}, expected={}",
-            lagrange_basis.len(),
-            exported_srs_identity.lagrange_commitments.len()
-        );
-        return ExitCode::from(3);
-    }
+            for (index, (actual, expected)) in lagrange_basis
+                .iter()
+                .zip(&exported_srs_identity.lagrange_commitments)
+                .enumerate()
+            {
+                if let Some(mismatch) = compare_poly_comm(actual, expected) {
+                    println!("wrap SRS mismatch at lagrange_basis[{index}]: {mismatch}");
+                    return ExitCode::from(4);
+                }
+            }
 
-    for (index, (actual, expected)) in lagrange_basis
-        .iter()
-        .zip(&exported_srs_identity.lagrange_commitments)
-        .enumerate()
-    {
-        if let Some(mismatch) = compare_poly_comm(actual, expected) {
             println!(
-                "wrap SRS mismatch at lagrange_basis[{index}]: {mismatch}"
+                "wrap SRS matches Mina export: h and {} ordered lagrange commitments",
+                lagrange_basis.len()
             );
-            return ExitCode::from(4);
+        }
+        "sampled" => {
+            eprintln!(
+                "note: sampled mode still computes the full ordered Lagrange basis; it only reduces comparison work"
+            );
+            let lagrange_basis = lowered
+                .verifier_index
+                .srs
+                .get_lagrange_basis(lowered.verifier_index.domain);
+            for sample in &exported_srs_identity.lagrange_commitment_samples {
+                let actual = lagrange_basis.get(sample.index).unwrap_or_else(|| {
+                    panic!("missing lagrange_basis[{}] in reconstructed SRS", sample.index)
+                });
+                if let Some(mismatch) = compare_poly_comm(actual, &sample.commitment) {
+                    println!(
+                        "wrap SRS mismatch at sampled lagrange_basis[{}]: {}",
+                        sample.index, mismatch
+                    );
+                    return ExitCode::from(5);
+                }
+            }
+
+            println!(
+                "wrap SRS matches Mina export on {} sampled lagrange commitments",
+                exported_srs_identity.lagrange_commitment_samples.len()
+            );
+        }
+        other => {
+            eprintln!("unsupported mode {other}; expected 'sampled' or 'full'");
+            return ExitCode::from(6);
         }
     }
-
-    println!(
-        "wrap SRS matches Mina export: h and {} ordered lagrange commitments",
-        lagrange_basis.len()
-    );
     ExitCode::SUCCESS
 }

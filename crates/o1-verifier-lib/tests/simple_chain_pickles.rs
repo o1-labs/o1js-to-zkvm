@@ -481,6 +481,38 @@ fn first_eval_mismatch_against_side_loaded_prev_evals(
     None
 }
 
+fn assert_point_evaluations_match_probe(
+    actual: &kimchi::proof::PointEvaluations<Vec<Fq>>,
+    expected: &o1_verifier_lib::pickles_types::FieldEvalPairHex,
+    label: &str,
+) {
+    assert_eq!(
+        actual.zeta.len(),
+        expected.zeta.len(),
+        "{label}.zeta length mismatch"
+    );
+    assert_eq!(
+        actual.zeta_omega.len(),
+        expected.zeta_omega.len(),
+        "{label}.zeta_omega length mismatch"
+    );
+    for (index, (actual, expected)) in actual.zeta.iter().zip(&expected.zeta).enumerate() {
+        assert_eq!(
+            normalize_hex(&field_to_hex(*actual)),
+            normalize_hex(expected),
+            "{label}.zeta[{index}] mismatch",
+        );
+    }
+    for (index, (actual, expected)) in actual.zeta_omega.iter().zip(&expected.zeta_omega).enumerate()
+    {
+        assert_eq!(
+            normalize_hex(&field_to_hex(*actual)),
+            normalize_hex(expected),
+            "{label}.zeta_omega[{index}] mismatch",
+        );
+    }
+}
+
 #[test]
 fn test_parse_simple_chain_bundle() {
     let bundle = parse_simple_chain_bundle(SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -926,6 +958,60 @@ fn test_lowered_prev_challenges_match_exported_backend_prev_challenges() {
 }
 
 #[test]
+fn test_lowered_recursive_wrap_evals_match_exported_backend_probe() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let probe = request
+        .exported_backend_evals_probe
+        .as_ref()
+        .expect("recursive_step should include exported backend eval probe");
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_point_evaluations_match_probe(&lowered.proof.evals.w[0], &probe.w0, "w0");
+    assert_point_evaluations_match_probe(&lowered.proof.evals.z, &probe.z, "z");
+    assert_point_evaluations_match_probe(&lowered.proof.evals.s[0], &probe.s0, "s0");
+    assert_point_evaluations_match_probe(
+        &lowered.proof.evals.coefficients[0],
+        &probe.coeff0,
+        "coeff0",
+    );
+    assert_point_evaluations_match_probe(
+        &lowered.proof.evals.generic_selector,
+        &probe.generic_selector,
+        "generic_selector",
+    );
+    assert_point_evaluations_match_probe(
+        &lowered.proof.evals.poseidon_selector,
+        &probe.poseidon_selector,
+        "poseidon_selector",
+    );
+    assert_point_evaluations_match_probe(
+        &lowered.proof.evals.complete_add_selector,
+        &probe.complete_add_selector,
+        "complete_add_selector",
+    );
+    assert_point_evaluations_match_probe(
+        &lowered.proof.evals.mul_selector,
+        &probe.mul_selector,
+        "mul_selector",
+    );
+    assert_point_evaluations_match_probe(
+        &lowered.proof.evals.emul_selector,
+        &probe.emul_selector,
+        "emul_selector",
+    );
+    assert_point_evaluations_match_probe(
+        &lowered.proof.evals.endomul_scalar_selector,
+        &probe.endomul_scalar_selector,
+        "endomul_scalar_selector",
+    );
+}
+
+#[test]
 fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     let bundle =
         parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -951,6 +1037,30 @@ fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     assert_eq!(lowered.proof.prev_challenges[1].chals.len(), 15);
     assert_eq!(lowered.proof.prev_challenges[0].comm.chunks.len(), 1);
     assert_eq!(lowered.proof.prev_challenges[1].comm.chunks.len(), 1);
+}
+
+#[test]
+fn test_lowered_base_case_wrap_evals_match_exported_backend_probe() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("base_case")
+        .expect("base_case fixture request");
+    let probe = request
+        .exported_backend_evals_probe
+        .as_ref()
+        .expect("base_case should include exported backend eval probe");
+    let lowered = lower_simple_chain_raw_wrap_artifacts(&request)
+        .expect("base_case raw wrap artifacts should parse");
+
+    assert_point_evaluations_match_probe(&lowered.proof.evals.w[0], &probe.w0, "w0");
+    assert_point_evaluations_match_probe(&lowered.proof.evals.z, &probe.z, "z");
+    assert_point_evaluations_match_probe(&lowered.proof.evals.s[0], &probe.s0, "s0");
+    assert_point_evaluations_match_probe(
+        &lowered.proof.evals.coefficients[0],
+        &probe.coeff0,
+        "coeff0",
+    );
 }
 
 #[test]

@@ -44,12 +44,20 @@ pub struct ExportedRecursionChallenge {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// One sampled ordered Lagrange-basis commitment from Mina's wrap SRS export.
+pub struct ExportedLagrangeCommitmentSample {
+    pub index: usize,
+    pub commitment: PolyCommHex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Mina-exported ordered SRS identity data used to compare Rust's reconstructed
 /// wrap URS against the real Mina URS.
 pub struct ExportedSrsIdentity {
     pub urs_h: CurvePointHex,
     pub lagrange_commitments_domain_size: usize,
     pub lagrange_commitments: Vec<PolyCommHex>,
+    pub lagrange_commitment_samples: Vec<ExportedLagrangeCommitmentSample>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,6 +227,21 @@ pub struct ExportedWrapOracleFields {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Small probe of Mina's final backend wrap-proof evaluations.
+pub struct ExportedBackendEvalsProbe {
+    pub w0: FieldEvalPairHex,
+    pub z: FieldEvalPairHex,
+    pub s0: FieldEvalPairHex,
+    pub coeff0: FieldEvalPairHex,
+    pub generic_selector: FieldEvalPairHex,
+    pub poseidon_selector: FieldEvalPairHex,
+    pub complete_add_selector: FieldEvalPairHex,
+    pub mul_selector: FieldEvalPairHex,
+    pub emul_selector: FieldEvalPairHex,
+    pub endomul_scalar_selector: FieldEvalPairHex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Raw wrap verifier artifacts exported directly by Mina in Kimchi-compatible
 /// JSON form.
 pub struct ExportedRawWrapVerifier {
@@ -267,6 +290,7 @@ pub struct SimpleChainFixture {
     pub exported_wrap_oracle_fields: Option<ExportedWrapOracleFields>,
     pub exported_raw_wrap_proof: Option<ExportedRawWrapProof>,
     pub exported_backend_prev_challenges: Option<Vec<ExportedRecursionChallenge>>,
+    pub exported_backend_evals_probe: Option<ExportedBackendEvalsProbe>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -299,6 +323,7 @@ impl SimpleChainFixtureBundle {
             exported_raw_wrap_verifier: self.exported_raw_wrap_verifier.clone(),
             exported_raw_wrap_proof: fixture.exported_raw_wrap_proof.clone(),
             exported_backend_prev_challenges: fixture.exported_backend_prev_challenges.clone(),
+            exported_backend_evals_probe: fixture.exported_backend_evals_probe.clone(),
             exported_srs_identity: self.exported_srs_identity.clone(),
         })
     }
@@ -315,5 +340,6 @@ pub struct PicklesVerifyRequest {
     pub exported_raw_wrap_verifier: Option<ExportedRawWrapVerifier>,
     pub exported_raw_wrap_proof: Option<ExportedRawWrapProof>,
     pub exported_backend_prev_challenges: Option<Vec<ExportedRecursionChallenge>>,
+    pub exported_backend_evals_probe: Option<ExportedBackendEvalsProbe>,
     pub exported_srs_identity: Option<ExportedSrsIdentity>,
 }
