@@ -30,6 +30,29 @@ pub struct CurvePointHex {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Polynomial commitment exported by Mina as affine chunk points.
+pub struct PolyCommHex {
+    pub unshifted: Vec<CurvePointHex>,
+    pub shifted: Option<CurvePointHex>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// One recursion challenge entry from Mina's backend proof object.
+pub struct ExportedRecursionChallenge {
+    pub chals_hex: Vec<String>,
+    pub comm: PolyCommHex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Mina-exported ordered SRS identity data used to compare Rust's reconstructed
+/// wrap URS against the real Mina URS.
+pub struct ExportedSrsIdentity {
+    pub urs_h: CurvePointHex,
+    pub lagrange_commitments_domain_size: usize,
+    pub lagrange_commitments: Vec<PolyCommHex>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Bulletproof prechallenge as exported by Mina before field packing.
 pub struct BulletproofChallengeHex {
     pub prechallenge_inner: Vec<String>,
@@ -231,6 +254,7 @@ pub struct SimpleChainFixture {
     pub exported_wrap_public_input: Option<ExportedWrapPublicInput>,
     pub exported_wrap_oracle_fields: Option<ExportedWrapOracleFields>,
     pub exported_raw_wrap_proof: Option<ExportedRawWrapProof>,
+    pub exported_backend_prev_challenges: Option<Vec<ExportedRecursionChallenge>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -238,6 +262,7 @@ pub struct SimpleChainFixture {
 pub struct SimpleChainFixtureBundle {
     pub verification_key: SideLoadedVkBytes,
     pub exported_raw_wrap_verifier: Option<ExportedRawWrapVerifier>,
+    pub exported_srs_identity: Option<ExportedSrsIdentity>,
     pub fixtures: Vec<SimpleChainFixture>,
 }
 
@@ -261,6 +286,8 @@ impl SimpleChainFixtureBundle {
             exported_wrap_oracle_fields: fixture.exported_wrap_oracle_fields.clone(),
             exported_raw_wrap_verifier: self.exported_raw_wrap_verifier.clone(),
             exported_raw_wrap_proof: fixture.exported_raw_wrap_proof.clone(),
+            exported_backend_prev_challenges: fixture.exported_backend_prev_challenges.clone(),
+            exported_srs_identity: self.exported_srs_identity.clone(),
         })
     }
 }
@@ -275,4 +302,6 @@ pub struct PicklesVerifyRequest {
     pub exported_wrap_oracle_fields: Option<ExportedWrapOracleFields>,
     pub exported_raw_wrap_verifier: Option<ExportedRawWrapVerifier>,
     pub exported_raw_wrap_proof: Option<ExportedRawWrapProof>,
+    pub exported_backend_prev_challenges: Option<Vec<ExportedRecursionChallenge>>,
+    pub exported_srs_identity: Option<ExportedSrsIdentity>,
 }

@@ -1544,7 +1544,62 @@ fn decode_side_loaded_proof_metadata(
 
 #[cfg(feature = "std")]
 fn normalize_proof_text(proof_text: &str) -> String {
-    proof_text.replace("domain_log2\"", "domain_log2 \"")
+    let proof_text = proof_text.replace("domain_log2\"", "domain_log2 \"");
+    let mut normalized = String::with_capacity(proof_text.len() + 64);
+    let mut token = String::new();
+    let mut in_string = false;
+
+    fn flush_token(normalized: &mut String, token: &mut String) {
+        if token.is_empty() {
+            return;
+        }
+
+        let is_hex_body = token.chars().all(|ch| ch.is_ascii_hexdigit());
+        let is_prefixed_hex = token.starts_with("0x")
+            && token.len() > 2
+            && token[2..].chars().all(|ch| ch.is_ascii_hexdigit());
+        let should_quote = is_hex_body || is_prefixed_hex;
+
+        if should_quote {
+            normalized.push('"');
+            normalized.push_str(token);
+            normalized.push('"');
+        } else {
+            normalized.push_str(token);
+        }
+
+        token.clear();
+    }
+
+    for ch in proof_text.chars() {
+        if in_string {
+            normalized.push(ch);
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => {
+                flush_token(&mut normalized, &mut token);
+                normalized.push(ch);
+                in_string = true;
+            }
+            '(' | ')' => {
+                flush_token(&mut normalized, &mut token);
+                normalized.push(ch);
+            }
+            ch if ch.is_whitespace() => {
+                flush_token(&mut normalized, &mut token);
+                normalized.push(ch);
+            }
+            other => token.push(other),
+        }
+    }
+
+    flush_token(&mut normalized, &mut token);
+    normalized
 }
 
 #[cfg(feature = "std")]

@@ -214,6 +214,25 @@ fn expected_mina_rust_padding_point_hex() -> CurvePointHex {
     }
 }
 
+fn assert_poly_comm_matches_exported(
+    actual: &poly_commitment::commitment::PolyComm<Pallas>,
+    expected: &o1_verifier_lib::pickles_types::PolyCommHex,
+) {
+    assert_eq!(actual.chunks.len(), expected.unshifted.len());
+    assert!(expected.shifted.is_none(), "unexpected shifted commitment export");
+
+    for (actual_chunk, expected_chunk) in actual.chunks.iter().zip(&expected.unshifted) {
+        assert_eq!(
+            normalize_hex(&field_to_hex(actual_chunk.x)),
+            normalize_hex(&expected_chunk.x)
+        );
+        assert_eq!(
+            normalize_hex(&field_to_hex(actual_chunk.y)),
+            normalize_hex(&expected_chunk.y)
+        );
+    }
+}
+
 #[test]
 fn test_parse_simple_chain_bundle() {
     let bundle = parse_simple_chain_bundle(SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -221,6 +240,7 @@ fn test_parse_simple_chain_bundle() {
     assert_eq!(bundle.fixtures.len(), 2);
     assert_eq!(bundle.verification_key.0, vec![1, 2, 3]);
     assert!(bundle.exported_raw_wrap_verifier.is_none());
+    assert!(bundle.exported_srs_identity.is_none());
 
     let base_case = bundle.fixture("base_case").expect("base_case fixture");
     assert_eq!(base_case.statement.to_fields().len(), 1);
@@ -600,6 +620,34 @@ fn test_lower_simple_chain_raw_wrap_artifacts() {
 }
 
 #[test]
+fn test_lowered_prev_challenges_match_exported_backend_prev_challenges() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let exported = request
+        .exported_backend_prev_challenges
+        .as_ref()
+        .expect("recursive_step should include exported backend prev_challenges");
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_eq!(lowered.proof.prev_challenges.len(), exported.len());
+
+    for (actual, expected) in lowered.proof.prev_challenges.iter().zip(exported) {
+        assert_eq!(actual.chals.len(), expected.chals_hex.len());
+        for (actual_chal, expected_chal) in actual.chals.iter().zip(&expected.chals_hex) {
+            assert_eq!(
+                normalize_hex(&field_to_hex(*actual_chal)),
+                normalize_hex(expected_chal)
+            );
+        }
+        assert_poly_comm_matches_exported(&actual.comm, &expected.comm);
+    }
+}
+
+#[test]
 fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     let bundle =
         parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -691,10 +739,30 @@ fn test_lower_simple_chain_request_reconstructs_srs() {
         .expect("recursive_step fixture request");
 
     let lowered = lower_simple_chain_request(&request).expect("lowering should succeed");
+    let exported_srs_identity = request
+        .exported_srs_identity
+        .as_ref()
+        .expect("real fixture should include exported SRS identity");
 
     assert_eq!(lowered.public_input.len(), 40);
     assert_eq!(lowered.verifier_index.max_poly_size, 32768);
     assert_eq!(lowered.verifier_index.srs.g.len(), 32768);
+    assert_eq!(
+        exported_srs_identity.lagrange_commitments_domain_size,
+        1 << lowered.verifier_index.domain.log_size_of_group
+    );
+    assert_eq!(
+        exported_srs_identity.lagrange_commitments.len(),
+        exported_srs_identity.lagrange_commitments_domain_size
+    );
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.verifier_index.srs.h.x)),
+        normalize_hex(&exported_srs_identity.urs_h.x)
+    );
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.verifier_index.srs.h.y)),
+        normalize_hex(&exported_srs_identity.urs_h.y)
+    );
 }
 
 #[test]

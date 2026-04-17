@@ -14,9 +14,10 @@ use serde_json::Value;
 
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
-    ExportedRawWrapProof, ExportedRawWrapVerifier, ExportedWrapOracleFields,
-    ExportedWrapPublicInput, PicklesVerifyRequest, SideLoadedProofBytes, SideLoadedVkBytes,
-    SimpleChainFixture, SimpleChainFixtureBundle, SimpleChainStatement,
+    CurvePointHex, ExportedRawWrapProof, ExportedRawWrapVerifier, ExportedRecursionChallenge,
+    ExportedSrsIdentity, ExportedWrapOracleFields, ExportedWrapPublicInput, PicklesVerifyRequest,
+    PolyCommHex, SideLoadedProofBytes, SideLoadedVkBytes, SimpleChainFixture,
+    SimpleChainFixtureBundle, SimpleChainStatement,
 };
 
 #[derive(Deserialize)]
@@ -25,6 +26,8 @@ struct RawSimpleChainBundle {
     side_loaded_verification_key_base64: Option<String>,
     #[serde(default)]
     raw_wrap_verification_key_json: Option<Value>,
+    #[serde(default)]
+    srs_identity: Option<Value>,
     rust_bundle: RawRustBundle,
 }
 
@@ -36,6 +39,8 @@ struct RawRustBundle {
     side_loaded_verification_key_base64: Option<String>,
     #[serde(default)]
     raw_wrap_verification_key_json: Option<Value>,
+    #[serde(default)]
+    srs_identity: Option<Value>,
     fixtures: Vec<RawRustFixture>,
 }
 
@@ -56,6 +61,8 @@ struct RawRustInputs {
     messages_for_next_step_proof_field: Option<String>,
     #[serde(default)]
     raw_wrap_proof_json: Option<Value>,
+    #[serde(default)]
+    final_backend_prev_challenges_json: Option<Value>,
     side_loaded_proof_base64: String,
 }
 
@@ -98,6 +105,140 @@ fn parse_hex_field_strings(fields: &[String]) -> Result<Vec<Fq>, PicklesError> {
     fields.iter().map(|field| parse_hex_field(field)).collect()
 }
 
+fn parse_curve_point_hex(value: &Value, field_name: &'static str) -> Result<CurvePointHex, PicklesError> {
+    let coords = value
+        .as_array()
+        .ok_or_else(|| PicklesError::InvalidJson(format!("{field_name}: expected [x, y] array")))?;
+    if coords.len() != 2 {
+        return Err(PicklesError::InvalidJson(format!(
+            "{field_name}: expected 2 coordinates, got {}",
+            coords.len()
+        )));
+    }
+    let x = coords[0].as_str().ok_or_else(|| {
+        PicklesError::InvalidJson(format!("{field_name}: invalid x coordinate"))
+    })?;
+    let y = coords[1].as_str().ok_or_else(|| {
+        PicklesError::InvalidJson(format!("{field_name}: invalid y coordinate"))
+    })?;
+    Ok(CurvePointHex {
+        x: x.to_string(),
+        y: y.to_string(),
+    })
+}
+
+fn parse_optional_curve_point_hex(
+    value: &Value,
+    field_name: &'static str,
+) -> Result<Option<CurvePointHex>, PicklesError> {
+    match value {
+        Value::Null => Ok(None),
+        Value::String(infinity) if infinity == "infinity" => Ok(None),
+        other => parse_curve_point_hex(other, field_name).map(Some),
+    }
+}
+
+fn parse_poly_comm_hex(value: &Value, field_name: &'static str) -> Result<PolyCommHex, PicklesError> {
+    let object = value.as_object().ok_or_else(|| {
+        PicklesError::InvalidJson(format!("{field_name}: expected object"))
+    })?;
+    let unshifted = object
+        .get("unshifted")
+        .and_then(Value::as_array)
+        .ok_or_else(|| PicklesError::InvalidJson(format!("{field_name}: missing unshifted")))?;
+    let unshifted = unshifted
+        .iter()
+        .map(|point| parse_curve_point_hex(point, field_name))
+        .collect::<Result<Vec<_>, _>>()?;
+    let shifted = object
+        .get("shifted")
+        .map(|value| parse_optional_curve_point_hex(value, field_name))
+        .transpose()?
+        .flatten();
+    Ok(PolyCommHex { unshifted, shifted })
+}
+
+fn parse_exported_prev_challenges(
+    value: &Value,
+) -> Result<Vec<ExportedRecursionChallenge>, PicklesError> {
+    let items = value.as_array().ok_or_else(|| {
+        PicklesError::InvalidJson("final_backend_prev_challenges_json: expected array".into())
+    })?;
+
+    items
+        .iter()
+        .map(|item| {
+            let object = item.as_object().ok_or_else(|| {
+                PicklesError::InvalidJson(
+                    "final_backend_prev_challenges_json: expected object entry".into(),
+                )
+            })?;
+            let chals = object
+                .get("chals")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    PicklesError::InvalidJson(
+                        "final_backend_prev_challenges_json: missing chals".into(),
+                    )
+                })?
+                .iter()
+                .map(|value| {
+                    value.as_str().map(ToString::to_string).ok_or_else(|| {
+                        PicklesError::InvalidJson(
+                            "final_backend_prev_challenges_json: invalid chal".into(),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let comm = parse_poly_comm_hex(
+                object.get("comm").ok_or_else(|| {
+                    PicklesError::InvalidJson(
+                        "final_backend_prev_challenges_json: missing comm".into(),
+                    )
+                })?,
+                "final_backend_prev_challenges_json.comm",
+            )?;
+            Ok(ExportedRecursionChallenge {
+                chals_hex: chals,
+                comm,
+            })
+        })
+        .collect()
+}
+
+fn parse_exported_srs_identity(value: &Value) -> Result<ExportedSrsIdentity, PicklesError> {
+    let object = value.as_object().ok_or_else(|| {
+        PicklesError::InvalidJson("srs_identity: expected object".into())
+    })?;
+    let urs_h = parse_curve_point_hex(
+        object
+            .get("urs_h")
+            .ok_or_else(|| PicklesError::InvalidJson("srs_identity: missing urs_h".into()))?,
+        "srs_identity.urs_h",
+    )?;
+    let lagrange_commitments_domain_size = object
+        .get("lagrange_commitments_domain_size")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            PicklesError::InvalidJson("srs_identity: missing lagrange_commitments_domain_size".into())
+        })? as usize;
+    let lagrange_commitments = object
+        .get("lagrange_commitments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            PicklesError::InvalidJson("srs_identity: missing lagrange_commitments".into())
+        })?
+        .iter()
+        .map(|value| parse_poly_comm_hex(value, "srs_identity.lagrange_commitments"))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(ExportedSrsIdentity {
+        urs_h,
+        lagrange_commitments_domain_size,
+        lagrange_commitments,
+    })
+}
+
 /// Parse a Mina-exported `Simple_chain` fixture bundle into typed Rust data.
 pub fn parse_simple_chain_bundle(
     bundle_json: &str,
@@ -124,6 +265,12 @@ pub fn parse_simple_chain_bundle(
         .map(|json| ExportedRawWrapVerifier {
             verifier_index_json: json.to_string(),
         });
+    let exported_srs_identity = raw
+        .rust_bundle
+        .srs_identity
+        .or(raw.srs_identity)
+        .map(|json| parse_exported_srs_identity(&json))
+        .transpose()?;
 
     let fixtures = raw
         .rust_bundle
@@ -170,6 +317,11 @@ pub fn parse_simple_chain_bundle(
                     .map(|json| ExportedRawWrapProof {
                         proof_json: json.to_string(),
                     });
+            let exported_backend_prev_challenges = fixture
+                .rust_inputs
+                .final_backend_prev_challenges_json
+                .map(|json| parse_exported_prev_challenges(&json))
+                .transpose()?;
 
             Ok(SimpleChainFixture {
                 name: fixture.name,
@@ -178,6 +330,7 @@ pub fn parse_simple_chain_bundle(
                 exported_wrap_public_input,
                 exported_wrap_oracle_fields,
                 exported_raw_wrap_proof,
+                exported_backend_prev_challenges,
             })
         })
         .collect::<Result<Vec<_>, PicklesError>>()?;
@@ -185,6 +338,7 @@ pub fn parse_simple_chain_bundle(
     Ok(SimpleChainFixtureBundle {
         verification_key,
         exported_raw_wrap_verifier,
+        exported_srs_identity,
         fixtures,
     })
 }
