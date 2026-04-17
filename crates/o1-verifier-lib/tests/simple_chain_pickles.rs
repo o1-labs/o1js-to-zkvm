@@ -234,6 +234,253 @@ fn assert_poly_comm_matches_exported(
     }
 }
 
+fn assert_curve_point_matches_exported(actual: &Pallas, expected: &CurvePointHex) {
+    assert_eq!(normalize_hex(&field_to_hex(actual.x)), normalize_hex(&expected.x));
+    assert_eq!(normalize_hex(&field_to_hex(actual.y)), normalize_hex(&expected.y));
+}
+
+fn assert_curve_point_pair_matches_exported(
+    actual: &(Pallas, Pallas),
+    expected: &o1_verifier_lib::pickles_types::CurvePointPairHex,
+) {
+    assert_curve_point_matches_exported(&actual.0, &expected.left);
+    assert_curve_point_matches_exported(&actual.1, &expected.right);
+}
+
+fn assert_lowered_wrap_proof_core_matches_metadata(
+    lowered: &o1_verifier_lib::pickles_lowering::LoweredRawWrapArtifacts,
+    metadata: &SideLoadedProofMetadata,
+) {
+    assert_eq!(
+        lowered.proof.commitments.w_comm.len(),
+        metadata.inner_proof.commitments.w_comm.len()
+    );
+    for (actual, expected) in lowered
+        .proof
+        .commitments
+        .w_comm
+        .iter()
+        .zip(&metadata.inner_proof.commitments.w_comm)
+    {
+        assert_eq!(actual.chunks.len(), 1);
+        assert_curve_point_matches_exported(&actual.chunks[0], expected);
+    }
+
+    assert_eq!(lowered.proof.commitments.z_comm.chunks.len(), 1);
+    assert_curve_point_matches_exported(
+        &lowered.proof.commitments.z_comm.chunks[0],
+        metadata
+            .inner_proof
+            .commitments
+            .z_comm
+            .first()
+            .expect("z_comm export"),
+    );
+
+    assert_eq!(
+        lowered.proof.commitments.t_comm.chunks.len(),
+        metadata.inner_proof.commitments.t_comm.len()
+    );
+    for (actual, expected) in lowered
+        .proof
+        .commitments
+        .t_comm
+        .chunks
+        .iter()
+        .zip(&metadata.inner_proof.commitments.t_comm)
+    {
+        assert_curve_point_matches_exported(actual, expected);
+    }
+
+    assert_eq!(
+        lowered.proof.proof.lr.len(),
+        metadata.inner_proof.bulletproof.lr_pairs.len()
+    );
+    for (actual, expected) in lowered
+        .proof
+        .proof
+        .lr
+        .iter()
+        .zip(&metadata.inner_proof.bulletproof.lr_pairs)
+    {
+        assert_curve_point_pair_matches_exported(actual, expected);
+    }
+
+    assert_curve_point_matches_exported(
+        &lowered.proof.proof.delta,
+        &metadata.inner_proof.bulletproof.delta,
+    );
+    assert_curve_point_matches_exported(
+        &lowered.proof.proof.sg,
+        &metadata.inner_proof.bulletproof.challenge_polynomial_commitment,
+    );
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.proof.proof.z1)),
+        normalize_hex(&metadata.inner_proof.bulletproof.z_1)
+    );
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.proof.proof.z2)),
+        normalize_hex(&metadata.inner_proof.bulletproof.z_2)
+    );
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.proof.ft_eval1)),
+        normalize_hex(&metadata.inner_proof.ft_eval1)
+    );
+}
+
+fn first_eval_mismatch_against_side_loaded_prev_evals(
+    lowered: &o1_verifier_lib::pickles_lowering::LoweredRawWrapArtifacts,
+    metadata: &SideLoadedProofMetadata,
+) -> Option<String> {
+    let w_evals = metadata
+        .prev_evals
+        .iter()
+        .find(|section| section.name == "w")
+        .expect("w prev_evals");
+    if lowered.proof.evals.w.len() != w_evals.evaluations.len() {
+        return Some(format!(
+            "w length mismatch: lowered={}, exported={}",
+            lowered.proof.evals.w.len(),
+            w_evals.evaluations.len()
+        ));
+    }
+    for (index, (actual, expected)) in lowered
+        .proof
+        .evals
+        .w
+        .iter()
+        .zip(&w_evals.evaluations)
+        .enumerate()
+    {
+        for (field_index, (actual, expected)) in actual.zeta.iter().zip(&expected.zeta).enumerate() {
+            if normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected) {
+                return Some(format!("w[{index}].zeta[{field_index}]"));
+            }
+        }
+        for (field_index, (actual, expected)) in actual
+            .zeta_omega
+            .iter()
+            .zip(&expected.zeta_omega)
+            .enumerate()
+        {
+            if normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected) {
+                return Some(format!("w[{index}].zeta_omega[{field_index}]"));
+            }
+        }
+    }
+
+    let coeff_evals = metadata
+        .prev_evals
+        .iter()
+        .find(|section| section.name == "coefficients")
+        .expect("coefficients prev_evals");
+    if lowered.proof.evals.coefficients.len() != coeff_evals.evaluations.len() {
+        return Some(format!(
+            "coefficients length mismatch: lowered={}, exported={}",
+            lowered.proof.evals.coefficients.len(),
+            coeff_evals.evaluations.len()
+        ));
+    }
+    for (index, (actual, expected)) in lowered
+        .proof
+        .evals
+        .coefficients
+        .iter()
+        .zip(&coeff_evals.evaluations)
+        .enumerate()
+    {
+        for (field_index, (actual, expected)) in actual.zeta.iter().zip(&expected.zeta).enumerate() {
+            if normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected) {
+                return Some(format!("coefficients[{index}].zeta[{field_index}]"));
+            }
+        }
+        for (field_index, (actual, expected)) in actual
+            .zeta_omega
+            .iter()
+            .zip(&expected.zeta_omega)
+            .enumerate()
+        {
+            if normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected) {
+                return Some(format!("coefficients[{index}].zeta_omega[{field_index}]"));
+            }
+        }
+    }
+
+    let z_evals = metadata
+        .prev_evals
+        .iter()
+        .find(|section| section.name == "z")
+        .expect("z prev_evals");
+    if z_evals.evaluations.len() != 1 {
+        return Some(format!("z length mismatch: exported={}", z_evals.evaluations.len()));
+    }
+    for (field_index, (actual, expected)) in lowered
+        .proof
+        .evals
+        .z
+        .zeta
+        .iter()
+        .zip(&z_evals.evaluations[0].zeta)
+        .enumerate()
+    {
+        if normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected) {
+            return Some(format!("z.zeta[{field_index}]"));
+        }
+    }
+    for (field_index, (actual, expected)) in lowered
+        .proof
+        .evals
+        .z
+        .zeta_omega
+        .iter()
+        .zip(&z_evals.evaluations[0].zeta_omega)
+        .enumerate()
+    {
+        if normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected) {
+            return Some(format!("z.zeta_omega[{field_index}]"));
+        }
+    }
+
+    let s_evals = metadata
+        .prev_evals
+        .iter()
+        .find(|section| section.name == "s")
+        .expect("s prev_evals");
+    if lowered.proof.evals.s.len() != s_evals.evaluations.len() {
+        return Some(format!(
+            "s length mismatch: lowered={}, exported={}",
+            lowered.proof.evals.s.len(),
+            s_evals.evaluations.len()
+        ));
+    }
+    for (index, (actual, expected)) in lowered
+        .proof
+        .evals
+        .s
+        .iter()
+        .zip(&s_evals.evaluations)
+        .enumerate()
+    {
+        for (field_index, (actual, expected)) in actual.zeta.iter().zip(&expected.zeta).enumerate() {
+            if normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected) {
+                return Some(format!("s[{index}].zeta[{field_index}]"));
+            }
+        }
+        for (field_index, (actual, expected)) in actual
+            .zeta_omega
+            .iter()
+            .zip(&expected.zeta_omega)
+            .enumerate()
+        {
+            if normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected) {
+                return Some(format!("s[{index}].zeta_omega[{field_index}]"));
+            }
+        }
+    }
+
+    None
+}
+
 #[test]
 fn test_parse_simple_chain_bundle() {
     let bundle = parse_simple_chain_bundle(SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -621,6 +868,36 @@ fn test_lower_simple_chain_raw_wrap_artifacts() {
 }
 
 #[test]
+fn test_lowered_recursive_wrap_proof_core_matches_exported_opening_boundary() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_lowered_wrap_proof_core_matches_metadata(&lowered, &metadata);
+}
+
+#[test]
+fn test_recursive_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witness_slot() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    let mismatch =
+        first_eval_mismatch_against_side_loaded_prev_evals(&lowered, &metadata).expect("mismatch");
+    assert_eq!(mismatch, "w[0].zeta[0]");
+}
+
+#[test]
 fn test_lowered_prev_challenges_match_exported_backend_prev_challenges() {
     let bundle =
         parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -674,6 +951,36 @@ fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     assert_eq!(lowered.proof.prev_challenges[1].chals.len(), 15);
     assert_eq!(lowered.proof.prev_challenges[0].comm.chunks.len(), 1);
     assert_eq!(lowered.proof.prev_challenges[1].comm.chunks.len(), 1);
+}
+
+#[test]
+fn test_lowered_base_case_wrap_proof_core_matches_exported_opening_boundary() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("base_case")
+        .expect("base_case fixture request");
+    let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
+    let lowered = lower_simple_chain_raw_wrap_artifacts(&request)
+        .expect("base_case raw wrap artifacts should parse");
+
+    assert_lowered_wrap_proof_core_matches_metadata(&lowered, &metadata);
+}
+
+#[test]
+fn test_base_case_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witness_slot() {
+    let bundle =
+        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+    let request = bundle
+        .request_for_fixture("base_case")
+        .expect("base_case fixture request");
+    let metadata = lower_simple_chain_metadata(&request).expect("metadata should decode");
+    let lowered = lower_simple_chain_raw_wrap_artifacts(&request)
+        .expect("base_case raw wrap artifacts should parse");
+
+    let mismatch =
+        first_eval_mismatch_against_side_loaded_prev_evals(&lowered, &metadata).expect("mismatch");
+    assert_eq!(mismatch, "w[0].zeta[0]");
 }
 
 #[test]
