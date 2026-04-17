@@ -1183,7 +1183,13 @@ fn derive_transcript_challenges(
         sponge.absorb(&parse_hex_field(field)?);
     }
 
-    for section in canonical_prev_eval_absorption_sections(metadata) {
+    // This intentionally uses Pickles statement-side deferred `prev_evals`, not
+    // the raw wrap proof's backend `ProofEvaluations`.
+    //
+    // That matches Mina's verification flow and `mina-rust`'s
+    // `compute_deferred_values`, which derive transcript/deferred scalars from
+    // `proof.prev_evals`.
+    for section in canonical_deferred_prev_eval_absorption_sections(metadata) {
         for evaluation in &section.evaluations {
             for field in &evaluation.zeta {
                 sponge.absorb(&parse_hex_field(field)?);
@@ -1231,9 +1237,9 @@ fn derive_perm_hex(
     zeta: Fp,
     omega: Fp,
 ) -> Result<String, PicklesError> {
-    let z_section = prev_eval_section(metadata, "z")?;
-    let s_section = prev_eval_section(metadata, "s")?;
-    let w_section = prev_eval_section(metadata, "w")?;
+    let z_section = deferred_prev_eval_section(metadata, "z")?;
+    let s_section = deferred_prev_eval_section(metadata, "s")?;
+    let w_section = deferred_prev_eval_section(metadata, "w")?;
     let z_next = parse_hex_field(
         z_section
             .evaluations
@@ -1278,7 +1284,7 @@ fn zk_polynomial(zeta: Fp, omega: Fp) -> Fp {
 }
 
 #[cfg(feature = "std")]
-fn prev_eval_section<'a>(
+fn deferred_prev_eval_section<'a>(
     metadata: &'a SideLoadedProofMetadata,
     name: &str,
 ) -> Result<&'a NamedFieldEvalSectionHex, PicklesError> {
@@ -1441,7 +1447,13 @@ fn pallas_scalar_endo() -> &'static Fq {
 }
 
 #[cfg(feature = "std")]
-fn canonical_prev_eval_absorption_sections<'a>(
+/// Return the deferred Pickles `prev_evals` sections in Mina's transcript
+/// absorption order.
+///
+/// This helper is intentionally *not* based on the raw wrap proof's backend
+/// `ProofEvaluations`. The backend opening evaluations differ from the deferred
+/// `prev_evals` and are used for a different layer of verification.
+fn canonical_deferred_prev_eval_absorption_sections<'a>(
     metadata: &'a SideLoadedProofMetadata,
 ) -> Vec<&'a NamedFieldEvalSectionHex> {
     const ABSORPTION_ORDER: &[&str] = &[

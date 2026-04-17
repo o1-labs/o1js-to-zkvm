@@ -97,7 +97,11 @@ pub struct FieldEvalPairHex {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// A named `prev_evals` section with all field-evaluation pairs preserved.
+/// A named `prev_evals` section from the Pickles statement/deferred layer.
+///
+/// This is *not* the same object as the raw wrap proof's backend
+/// `ProofEvaluations`. Mina and `mina-rust` use these deferred evaluations when
+/// recomputing transcript/deferred values (`xi`, `b`, `perm`, etc.).
 pub struct NamedFieldEvalSectionHex {
     pub name: String,
     pub evaluations: Vec<FieldEvalPairHex>,
@@ -111,7 +115,10 @@ pub struct CurvePointPairHex {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// A named evaluation section from the inner wrap proof.
+/// A named evaluation section from the inner wrap proof's backend opening data.
+///
+/// These values correspond to the Kimchi wrap proof's `ProofEvaluations`. They
+/// are distinct from the Pickles statement's deferred `prev_evals`.
 pub struct NamedPointSectionHex {
     pub name: String,
     pub raw_payload_items: Vec<String>,
@@ -161,10 +168,15 @@ pub struct SideLoadedProofMetadata {
     pub wrap_old_bulletproof_challenges: Vec<Vec<BulletproofChallengeHex>>,
     pub next_step_challenge_polynomial_commitments: Vec<CurvePointHex>,
     pub next_step_old_bulletproof_challenges: Vec<Vec<BulletproofChallengeHex>>,
+    /// Public-input fields attached to the Pickles statement's deferred
+    /// `prev_evals` object, not the raw wrap proof's backend `public` evals.
     pub prev_evals_public_input: Vec<String>,
+    /// Deferred `prev_evals` used by Pickles scalar/transcript recomputation.
     pub prev_evals: Vec<NamedFieldEvalSectionHex>,
     pub prev_evals_sections: Vec<NamedSectionCount>,
+    /// `ft_eval1` from the Pickles statement/deferred view.
     pub ft_eval1: String,
+    /// Raw wrap proof body and backend opening data.
     pub inner_proof: WrapProofBodyHex,
 }
 
