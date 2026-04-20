@@ -4,7 +4,7 @@ use std::env;
 use std::process::ExitCode;
 
 use ark_ff::{BigInteger, PrimeField};
-use o1_verifier_lib::{lower_simple_chain_request, parse_simple_chain_bundle};
+use o1_verifier_lib::{lower_simple_chain_request, parse_simple_chain_bundle_with_urs_sidecar};
 use o1_verifier_lib::pickles_types::{CurvePointHex, PolyCommHex};
 use poly_commitment::SRS as _;
 
@@ -98,8 +98,13 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let urs_sidecar_path = bundle_path.replace(".json", ".urs_generators.json");
+    let urs_generators_json = std::fs::read_to_string(&urs_sidecar_path).ok();
 
-    let bundle = match parse_simple_chain_bundle(&bundle_json) {
+    let bundle = match parse_simple_chain_bundle_with_urs_sidecar(
+        &bundle_json,
+        urs_generators_json.as_deref(),
+    ) {
         Ok(bundle) => bundle,
         Err(err) => {
             eprintln!("failed to parse bundle: {err}");

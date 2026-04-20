@@ -30,8 +30,8 @@ use o1_verifier_lib::{
         make_padded_wrap_proof_from_request as make_mina_rust_padded_wrap_proof_from_request,
     },
     lower_simple_chain_metadata, lower_simple_chain_public_input_plan, lower_simple_chain_request,
-    lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle, WrapBaseSponge,
-    WrapScalarSponge,
+    lower_simple_chain_raw_wrap_artifacts, parse_simple_chain_bundle,
+    parse_simple_chain_bundle_with_urs_sidecar, WrapBaseSponge, WrapScalarSponge,
 };
 use o1_verifier_lib::pickles_types::{
     BulletproofChallengeHex, CurvePointHex, PicklesVerifyRequest, SideLoadedProofMetadata,
@@ -44,6 +44,16 @@ use rand::rngs::StdRng;
 const SIMPLE_CHAIN_BUNDLE_JSON: &str = include_str!("../../../fixtures/simple_chain_bundle.json");
 const REAL_SIMPLE_CHAIN_BUNDLE_JSON: &str =
     include_str!("../../../fixtures/simple_chain_real_bundle.json");
+const REAL_SIMPLE_CHAIN_URS_GENERATORS_JSON: &str =
+    include_str!("../../../fixtures/simple_chain_real_bundle.urs_generators.json");
+
+fn parse_real_simple_chain_bundle() -> o1_verifier_lib::pickles_types::SimpleChainFixtureBundle {
+    parse_simple_chain_bundle_with_urs_sidecar(
+        REAL_SIMPLE_CHAIN_BUNDLE_JSON,
+        Some(REAL_SIMPLE_CHAIN_URS_GENERATORS_JSON),
+    )
+    .expect("real bundle should parse")
+}
 
 fn normalize_hex(hex: &str) -> String {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
@@ -697,7 +707,7 @@ fn test_parse_simple_chain_bundle() {
 #[test]
 fn test_parse_expanded_backend_eval_probe_shape() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let recursive_step = bundle
         .fixture("recursive_step")
         .expect("recursive_step fixture");
@@ -730,7 +740,7 @@ fn test_parse_expanded_backend_eval_probe_shape() {
 #[test]
 fn test_lower_simple_chain_metadata() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -786,7 +796,7 @@ fn test_lower_simple_chain_metadata() {
 #[test]
 fn test_lower_simple_chain_base_case_metadata() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("base_case")
         .expect("base_case fixture request");
@@ -804,7 +814,7 @@ fn test_lower_simple_chain_base_case_metadata() {
 #[test]
 fn test_lower_simple_chain_public_input_plan() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -872,7 +882,7 @@ fn test_lower_simple_chain_public_input_plan() {
 #[test]
 fn test_parse_exported_wrap_public_input_fields() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -899,7 +909,7 @@ fn test_parse_exported_wrap_public_input_fields() {
 #[test]
 fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -992,7 +1002,7 @@ fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
 #[test]
 fn test_mina_rust_lowered_wrap_verification_matches_exported_public_input() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1019,7 +1029,7 @@ fn test_mina_rust_lowered_wrap_verification_matches_exported_public_input() {
 #[test]
 fn test_mina_rust_wrap_message_hash_matches_exported_wrap_field() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1044,7 +1054,7 @@ fn test_mina_rust_wrap_message_hash_matches_exported_wrap_field() {
 #[test]
 fn test_mina_rust_step_message_hash_matches_exported_oracle_field() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1068,7 +1078,7 @@ fn test_mina_rust_step_message_hash_matches_exported_oracle_field() {
 #[test]
 fn test_lower_simple_chain_raw_wrap_artifacts() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     assert!(bundle.exported_raw_wrap_verifier.is_some());
 
     let request = bundle
@@ -1096,7 +1106,7 @@ fn test_lower_simple_chain_raw_wrap_artifacts() {
 #[test]
 fn test_lowered_recursive_wrap_proof_core_matches_exported_opening_boundary() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1110,7 +1120,7 @@ fn test_lowered_recursive_wrap_proof_core_matches_exported_opening_boundary() {
 #[test]
 fn test_recursive_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witness_slot() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1126,7 +1136,7 @@ fn test_recursive_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witnes
 #[test]
 fn test_lowered_prev_challenges_match_exported_backend_prev_challenges() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1154,7 +1164,7 @@ fn test_lowered_prev_challenges_match_exported_backend_prev_challenges() {
 #[test]
 fn test_lowered_recursive_wrap_evals_match_exported_backend_probe() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1171,7 +1181,7 @@ fn test_lowered_recursive_wrap_evals_match_exported_backend_probe() {
 #[test]
 fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     assert!(bundle.exported_raw_wrap_verifier.is_some());
 
     let request = bundle
@@ -1199,7 +1209,7 @@ fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
 #[test]
 fn test_lowered_base_case_wrap_evals_match_exported_backend_probe() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("base_case")
         .expect("base_case fixture request");
@@ -1216,7 +1226,7 @@ fn test_lowered_base_case_wrap_evals_match_exported_backend_probe() {
 #[test]
 fn test_lowered_base_case_wrap_proof_core_matches_exported_opening_boundary() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("base_case")
         .expect("base_case fixture request");
@@ -1230,7 +1240,7 @@ fn test_lowered_base_case_wrap_proof_core_matches_exported_opening_boundary() {
 #[test]
 fn test_base_case_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witness_slot() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("base_case")
         .expect("base_case fixture request");
@@ -1246,7 +1256,7 @@ fn test_base_case_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witnes
 #[test]
 fn test_mina_rust_padded_wrap_proof_uses_padding_commitment() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1281,7 +1291,7 @@ fn test_mina_rust_padded_wrap_proof_uses_padding_commitment() {
 #[test]
 fn test_mina_rust_padded_wrap_proof_base_case_uses_padding_commitment() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("base_case")
         .expect("base_case fixture request");
@@ -1301,7 +1311,7 @@ fn test_mina_rust_padded_wrap_proof_base_case_uses_padding_commitment() {
 #[test]
 fn test_lower_simple_chain_request_reconstructs_srs() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1311,10 +1321,15 @@ fn test_lower_simple_chain_request_reconstructs_srs() {
         .exported_srs_identity
         .as_ref()
         .expect("real fixture should include exported SRS identity");
+    let exported_urs_generators = exported_srs_identity
+        .urs_generators
+        .as_ref()
+        .expect("real fixture should include exported URS generators");
 
     assert_eq!(lowered.public_input.len(), 40);
     assert_eq!(lowered.verifier_index.max_poly_size, 32768);
     assert_eq!(lowered.verifier_index.srs.g.len(), 32768);
+    assert_eq!(exported_urs_generators.len(), lowered.verifier_index.srs.g.len());
     assert_eq!(
         exported_srs_identity.lagrange_commitments_domain_size,
         1 << lowered.verifier_index.domain.log_size_of_group
@@ -1322,6 +1337,15 @@ fn test_lower_simple_chain_request_reconstructs_srs() {
     assert_eq!(
         exported_srs_identity.lagrange_commitments.len(),
         exported_srs_identity.lagrange_commitments_domain_size
+    );
+    assert!(
+        lowered
+            .verifier_index
+            .srs
+            .lagrange_bases()
+            .borrow()
+            .contains_key(&exported_srs_identity.lagrange_commitments_domain_size),
+        "lowered SRS should preload Mina's ordered Lagrange basis"
     );
     assert_eq!(
         normalize_hex(&field_to_hex(lowered.verifier_index.srs.h.x)),
@@ -1331,13 +1355,30 @@ fn test_lower_simple_chain_request_reconstructs_srs() {
         normalize_hex(&field_to_hex(lowered.verifier_index.srs.h.y)),
         normalize_hex(&exported_srs_identity.urs_h.y)
     );
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.verifier_index.srs.g[0].x)),
+        normalize_hex(&exported_urs_generators[0].x)
+    );
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.verifier_index.srs.g[0].y)),
+        normalize_hex(&exported_urs_generators[0].y)
+    );
+    let last = lowered.verifier_index.srs.g.len() - 1;
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.verifier_index.srs.g[last].x)),
+        normalize_hex(&exported_urs_generators[last].x)
+    );
+    assert_eq!(
+        normalize_hex(&field_to_hex(lowered.verifier_index.srs.g[last].y)),
+        normalize_hex(&exported_urs_generators[last].y)
+    );
 }
 
 #[test]
 #[ignore = "expensive full wrap lagrange-basis comparison against Mina export"]
 fn test_lower_simple_chain_request_matches_exported_lagrange_commitment_order() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");
@@ -1369,7 +1410,7 @@ fn test_lower_simple_chain_request_matches_exported_lagrange_commitment_order() 
 #[test]
 fn test_verify_simple_chain_recursive_step_reports_current_wrap_failure() {
     let bundle =
-        parse_simple_chain_bundle(REAL_SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
+        parse_real_simple_chain_bundle();
     let request = bundle
         .request_for_fixture("recursive_step")
         .expect("recursive_step fixture request");

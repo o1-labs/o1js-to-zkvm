@@ -19,6 +19,8 @@ use ark_ff::{BigInteger, Field, PrimeField, Zero};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
 #[cfg(feature = "std")]
 use blake2::{Blake2b512, Digest};
+#[cfg(feature = "std")]
+use std::rc::Rc;
 use groupmap::GroupMap;
 use kimchi::circuits::domains::EvaluationDomains;
 use kimchi::curve::KimchiCurve;
@@ -46,10 +48,10 @@ use serde::Deserialize;
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
     BulletproofChallengeHex, CurvePointHex, CurvePointPairHex, ExportedRecursionChallenge,
-    FieldEvalPairHex, NamedFieldEvalSectionHex, NamedPointSectionHex, NamedSectionCount,
-    PicklesVerifyRequest, PlonkDeferredValuesHex, PlonkFeatureFlags, SideLoadedProofMetadata,
-    WrapBulletproofHex, WrapProofBodyHex, WrapProofCommitmentsHex, WrapPublicInputFieldPlan,
-    WrapPublicInputPlan,
+    ExportedSrsIdentity, FieldEvalPairHex, NamedFieldEvalSectionHex, NamedPointSectionHex,
+    NamedSectionCount, PicklesVerifyRequest, PlonkDeferredValuesHex, PlonkFeatureFlags,
+    SideLoadedProofMetadata, WrapBulletproofHex, WrapProofBodyHex, WrapProofCommitmentsHex,
+    WrapPublicInputFieldPlan, WrapPublicInputPlan,
 };
 use crate::{PallasProof, PallasVerifierIndex, ScalarSponge};
 
@@ -135,7 +137,10 @@ pub fn lower_simple_chain_raw_wrap_artifacts(
 
     let metadata = lower_simple_chain_metadata(request)?;
     let mut verifier_index = parse_raw_wrap_verifier_index(&raw_wrap_verifier.verifier_index_json)?;
-    let srs = reconstruct_wrap_srs(verifier_index.max_poly_size)?;
+    let srs = build_wrap_srs(
+        request.exported_srs_identity.as_ref(),
+        verifier_index.max_poly_size,
+    )?;
     let proof = parse_raw_wrap_proof(
         &raw_wrap_proof.proof_json,
         &metadata,
@@ -159,6 +164,58 @@ pub fn lower_simple_chain_raw_wrap_artifacts(
 /// generated. It is useful for debugging and proof lowering, but it remains a
 /// potential source of mismatch until the reconstructed SRS is shown to match
 /// Mina's ordered basis and opening-proof behavior exactly.
+fn build_wrap_srs(
+    exported_srs_identity: Option<&ExportedSrsIdentity>,
+    max_poly_size: usize,
+) -> Result<SRS<Pallas>, PicklesError> {
+    if let Some(exported_srs_identity) = exported_srs_identity {
+        if let Some(urs_generators) = exported_srs_identity.urs_generators.as_ref() {
+            return build_wrap_srs_from_exported_generators(
+                exported_srs_identity,
+                urs_generators,
+                max_poly_size,
+            );
+        }
+    }
+
+    reconstruct_wrap_srs(max_poly_size)
+}
+
+#[cfg(feature = "std")]
+fn build_wrap_srs_from_exported_generators(
+    exported_srs_identity: &ExportedSrsIdentity,
+    urs_generators: &[CurvePointHex],
+    max_poly_size: usize,
+) -> Result<SRS<Pallas>, PicklesError> {
+    if urs_generators.len() != max_poly_size {
+        return Err(PicklesError::InvalidJson(format!(
+            "exported URS length mismatch: expected {max_poly_size}, got {}",
+            urs_generators.len()
+        )));
+    }
+
+    let h = parse_curve_point_hex_pallas(&exported_srs_identity.urs_h)?;
+    let g = urs_generators
+        .iter()
+        .map(parse_curve_point_hex_pallas)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let lagrange_commitments = exported_srs_identity
+        .lagrange_commitments
+        .iter()
+        .map(parse_poly_comm_hex_pallas)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut srs = SRS::<Pallas>::default();
+    srs.g = g;
+    srs.h = h;
+    srs.lagrange_bases().borrow_mut().insert(
+        exported_srs_identity.lagrange_commitments_domain_size,
+        Rc::new(lagrange_commitments),
+    );
+    Ok(srs)
+}
+
+#[cfg(feature = "std")]
 fn reconstruct_wrap_srs(max_poly_size: usize) -> Result<SRS<Pallas>, PicklesError> {
     if max_poly_size == 0 {
         return Err(PicklesError::InvalidJson(

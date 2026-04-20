@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-std = ["serde_json", "base64", "ark-poly", "sexp", "blake2"]
+std = [
+  "serde_json",
+  "base64",
+  "ark-poly",
+  "sexp",
+  "blake2",
+]
 
 [dependencies]
 kimchi = { workspace = true }
@@ -44,4 +50,8 @@ required-features = ["std"]
 
 [[bin]]
 name = "compare_wrap_srs"
+required-features = ["std"]
+
+[[bin]]
+name = "trace_wrap_verify"
 required-features = ["std"]

@@ -251,10 +251,23 @@ fn parse_exported_srs_identity(value: &Value) -> Result<ExportedSrsIdentity, Pic
 
     Ok(ExportedSrsIdentity {
         urs_h,
+        urs_generators: None,
         lagrange_commitments_domain_size,
         lagrange_commitments,
         lagrange_commitment_samples,
     })
+}
+
+/// Parse the full ordered URS generator sidecar emitted by the Mina exporter.
+fn parse_exported_urs_generators(value: &Value) -> Result<Vec<CurvePointHex>, PicklesError> {
+    let items = value.as_array().ok_or_else(|| {
+        PicklesError::InvalidJson("urs_generators: expected array".into())
+    })?;
+
+    items
+        .iter()
+        .map(|value| parse_curve_point_hex(value, "urs_generators"))
+        .collect()
 }
 
 /// Parse sampled ordered Lagrange commitments from the exporter.
@@ -450,6 +463,15 @@ fn parse_exported_backend_evals_probe(
 pub fn parse_simple_chain_bundle(
     bundle_json: &str,
 ) -> Result<SimpleChainFixtureBundle, PicklesError> {
+    parse_simple_chain_bundle_with_urs_sidecar(bundle_json, None)
+}
+
+/// Parse a Mina-exported `Simple_chain` bundle plus the optional full ordered
+/// URS sidecar emitted alongside the manifest.
+pub fn parse_simple_chain_bundle_with_urs_sidecar(
+    bundle_json: &str,
+    urs_generators_json: Option<&str>,
+) -> Result<SimpleChainFixtureBundle, PicklesError> {
     let raw: RawSimpleChainBundle = serde_json::from_str(bundle_json)
         .map_err(|err| PicklesError::InvalidJson(err.to_string()))?;
 
@@ -472,12 +494,20 @@ pub fn parse_simple_chain_bundle(
         .map(|json| ExportedRawWrapVerifier {
             verifier_index_json: json.to_string(),
         });
-    let exported_srs_identity = raw
+    let mut exported_srs_identity = raw
         .rust_bundle
         .srs_identity
         .or(raw.srs_identity)
         .map(|json| parse_exported_srs_identity(&json))
         .transpose()?;
+    if let Some(urs_generators_json) = urs_generators_json {
+        let value: Value = serde_json::from_str(urs_generators_json)
+            .map_err(|err| PicklesError::InvalidJson(err.to_string()))?;
+        let urs_generators = parse_exported_urs_generators(&value)?;
+        if let Some(identity) = exported_srs_identity.as_mut() {
+            identity.urs_generators = Some(urs_generators);
+        }
+    }
 
     let fixtures = raw
         .rust_bundle

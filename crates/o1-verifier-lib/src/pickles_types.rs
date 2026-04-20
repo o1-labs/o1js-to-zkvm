@@ -55,6 +55,7 @@ pub struct ExportedLagrangeCommitmentSample {
 /// wrap URS against the real Mina URS.
 pub struct ExportedSrsIdentity {
     pub urs_h: CurvePointHex,
+    pub urs_generators: Option<Vec<CurvePointHex>>,
     pub lagrange_commitments_domain_size: usize,
     pub lagrange_commitments: Vec<PolyCommHex>,
     pub lagrange_commitment_samples: Vec<ExportedLagrangeCommitmentSample>,
