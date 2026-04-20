@@ -15,6 +15,7 @@ use serde_json::Value;
 use crate::pickles_error::PicklesError;
 use crate::pickles_types::{
     CurvePointHex, ExportedBackendEvalsProbe, ExportedLagrangeCommitmentSample,
+    ExportedOpeningProofOracle,
     ExportedRawWrapProof, ExportedRawWrapVerifier, ExportedRecursionChallenge,
     ExportedSrsIdentity, ExportedWrapOracleFields, ExportedWrapPublicInput, FieldEvalPairHex,
     PicklesVerifyRequest, PolyCommHex, SideLoadedProofBytes, SideLoadedVkBytes,
@@ -66,6 +67,10 @@ struct RawRustInputs {
     final_backend_prev_challenges_json: Option<Value>,
     #[serde(default)]
     final_backend_evals_probe_json: Option<Value>,
+    #[serde(default)]
+    final_backend_opening_prechallenges_json: Option<Value>,
+    #[serde(default)]
+    final_backend_expected_sg_json: Option<Value>,
     side_loaded_proof_base64: String,
 }
 
@@ -459,6 +464,39 @@ fn parse_exported_backend_evals_probe(
     })
 }
 
+/// Parse verifier-native opening prechallenges and the expected folded-base
+/// commitment exported by Mina for the final backend wrap proof.
+fn parse_exported_opening_proof_oracle(
+    opening_prechallenges: &Value,
+    expected_sg: &Value,
+) -> Result<ExportedOpeningProofOracle, PicklesError> {
+    let opening_prechallenges_hex = opening_prechallenges
+        .as_array()
+        .ok_or_else(|| {
+            PicklesError::InvalidJson(
+                "final_backend_opening_prechallenges_json: expected array".into(),
+            )
+        })?
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToString::to_string).ok_or_else(|| {
+                PicklesError::InvalidJson(
+                    "final_backend_opening_prechallenges_json: invalid field".into(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected_sg = parse_curve_point_hex(
+        expected_sg,
+        "final_backend_expected_sg_json",
+    )?;
+
+    Ok(ExportedOpeningProofOracle {
+        opening_prechallenges_hex,
+        expected_sg,
+    })
+}
+
 /// Parse a Mina-exported `Simple_chain` fixture bundle into typed Rust data.
 pub fn parse_simple_chain_bundle(
     bundle_json: &str,
@@ -564,6 +602,20 @@ pub fn parse_simple_chain_bundle_with_urs_sidecar(
                 .final_backend_evals_probe_json
                 .map(|json| parse_exported_backend_evals_probe(&json))
                 .transpose()?;
+            let exported_opening_proof_oracle = match (
+                fixture.rust_inputs.final_backend_opening_prechallenges_json,
+                fixture.rust_inputs.final_backend_expected_sg_json,
+            ) {
+                (Some(opening_prechallenges), Some(expected_sg)) => Some(
+                    parse_exported_opening_proof_oracle(&opening_prechallenges, &expected_sg)?,
+                ),
+                (None, None) => None,
+                _ => {
+                    return Err(PicklesError::InvalidJson(
+                        "incomplete exported opening proof oracle fields".into(),
+                    ))
+                }
+            };
 
             Ok(SimpleChainFixture {
                 name: fixture.name,
@@ -574,6 +626,7 @@ pub fn parse_simple_chain_bundle_with_urs_sidecar(
                 exported_raw_wrap_proof,
                 exported_backend_prev_challenges,
                 exported_backend_evals_probe,
+                exported_opening_proof_oracle,
             })
         })
         .collect::<Result<Vec<_>, PicklesError>>()?;

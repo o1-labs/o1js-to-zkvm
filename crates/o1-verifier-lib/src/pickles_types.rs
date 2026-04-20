@@ -261,6 +261,14 @@ pub struct ExportedBackendEvalsProbe {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Verifier-native opening prechallenges exported by Mina for the final backend
+/// wrap proof.
+pub struct ExportedOpeningProofOracle {
+    pub opening_prechallenges_hex: Vec<String>,
+    pub expected_sg: CurvePointHex,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Raw wrap verifier artifacts exported directly by Mina in Kimchi-compatible
 /// JSON form.
 pub struct ExportedRawWrapVerifier {
@@ -310,6 +318,7 @@ pub struct SimpleChainFixture {
     pub exported_raw_wrap_proof: Option<ExportedRawWrapProof>,
     pub exported_backend_prev_challenges: Option<Vec<ExportedRecursionChallenge>>,
     pub exported_backend_evals_probe: Option<ExportedBackendEvalsProbe>,
+    pub exported_opening_proof_oracle: Option<ExportedOpeningProofOracle>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -343,6 +352,7 @@ impl SimpleChainFixtureBundle {
             exported_raw_wrap_proof: fixture.exported_raw_wrap_proof.clone(),
             exported_backend_prev_challenges: fixture.exported_backend_prev_challenges.clone(),
             exported_backend_evals_probe: fixture.exported_backend_evals_probe.clone(),
+            exported_opening_proof_oracle: fixture.exported_opening_proof_oracle.clone(),
             exported_srs_identity: self.exported_srs_identity.clone(),
         })
     }
@@ -360,5 +370,6 @@ pub struct PicklesVerifyRequest {
     pub exported_raw_wrap_proof: Option<ExportedRawWrapProof>,
     pub exported_backend_prev_challenges: Option<Vec<ExportedRecursionChallenge>>,
     pub exported_backend_evals_probe: Option<ExportedBackendEvalsProbe>,
+    pub exported_opening_proof_oracle: Option<ExportedOpeningProofOracle>,
     pub exported_srs_identity: Option<ExportedSrsIdentity>,
 }

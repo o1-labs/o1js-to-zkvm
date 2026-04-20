@@ -11,13 +11,17 @@ use std::str::FromStr;
 
 use groupmap::GroupMap;
 use ark_ff::{BigInteger, PrimeField};
+use ark_poly::EvaluationDomain;
+use kimchi::oracles::OraclesResult;
 use kimchi::curve::KimchiCurve;
 use kimchi::error::VerifyError;
 use kimchi::verifier::verify_with_rng;
 use mina_curves::pasta::{Fp, Fq, Pallas, Vesta};
+use mina_poseidon::FqSponge;
 use mina_poseidon::pasta::FULL_ROUNDS;
 use mina_poseidon::sponge::ScalarChallenge;
 use poly_commitment::commitment::CommitmentCurve;
+use poly_commitment::commitment::{shift_scalar, PolyComm};
 use o1_verifier_lib::{
     pickles_mina_rust::{
         DlogPlonkVerificationKeyEvals as MinaRustDlogPlonkVerificationKeyEvals,
@@ -684,6 +688,82 @@ fn assert_optional_point_evaluations_match_probe(
     }
 }
 
+fn build_public_comm_for_lowered(
+    lowered: &o1_verifier_lib::pickles_lowering::LoweredRawWrapArtifacts,
+) -> PolyComm<Pallas> {
+    let verifier_index = &lowered.verifier_index;
+    let public_input = &lowered.public_input;
+    let chunk_size = {
+        let d1_size = verifier_index.domain.size();
+        if d1_size < verifier_index.max_poly_size {
+            1
+        } else {
+            d1_size / verifier_index.max_poly_size
+        }
+    };
+    let lgr_comm = verifier_index
+        .srs()
+        .get_lagrange_basis(verifier_index.domain);
+    let com: Vec<_> = lgr_comm.iter().take(verifier_index.public).collect();
+    if public_input.is_empty() {
+        PolyComm::new(vec![verifier_index.srs().blinding_commitment(); chunk_size])
+    } else {
+        let elm: Vec<_> = public_input.iter().map(|s| -*s).collect();
+        let public_comm = PolyComm::<Pallas>::multi_scalar_mul(&com, &elm);
+        verifier_index
+            .srs()
+            .mask_custom(
+                public_comm.clone(),
+                &public_comm.map(|_| Fq::from(1u64)),
+            )
+            .expect("masking public commitment should succeed")
+            .commitment
+    }
+}
+
+fn derive_opening_prechallenges_for_lowered(
+    lowered: &o1_verifier_lib::pickles_lowering::LoweredRawWrapArtifacts,
+) -> Vec<Fq> {
+    let public_comm = build_public_comm_for_lowered(lowered);
+    let OraclesResult {
+        mut fq_sponge,
+        combined_inner_product,
+        ..
+    } = lowered
+        .proof
+        .oracles::<WrapBaseSponge, WrapScalarSponge, _>(
+            &lowered.verifier_index,
+            &public_comm,
+            Some(&lowered.public_input),
+        )
+        .expect("oracles should build");
+    fq_sponge.absorb_fr(&[shift_scalar::<Pallas>(combined_inner_product)]);
+    lowered
+        .proof
+        .proof
+        .prechallenges(&mut fq_sponge)
+        .into_iter()
+        .map(|challenge| challenge.inner())
+        .collect()
+}
+
+fn first_opening_prechallenge_mismatch(
+    lowered: &o1_verifier_lib::pickles_lowering::LoweredRawWrapArtifacts,
+    exported: &o1_verifier_lib::pickles_types::ExportedOpeningProofOracle,
+) -> Option<usize> {
+    let derived = derive_opening_prechallenges_for_lowered(lowered);
+    if derived.len() != exported.opening_prechallenges_hex.len() {
+        return Some(usize::MAX);
+    }
+    derived
+        .iter()
+        .zip(&exported.opening_prechallenges_hex)
+        .enumerate()
+        .find_map(|(index, (actual, expected))| {
+            (normalize_hex(&field_to_hex(*actual)) != normalize_hex(expected)).then_some(index)
+        })
+}
+
 #[test]
 fn test_parse_simple_chain_bundle() {
     let bundle = parse_simple_chain_bundle(SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
@@ -735,6 +815,22 @@ fn test_parse_expanded_backend_eval_probe_shape() {
     assert!(probe.lookup_gate_lookup_selector.is_none());
     assert!(probe.range_check_lookup_selector.is_none());
     assert!(probe.foreign_field_mul_lookup_selector.is_none());
+}
+
+#[test]
+fn test_parse_opening_proof_oracle_exports() {
+    let bundle = parse_real_simple_chain_bundle();
+    let recursive_step = bundle
+        .fixture("recursive_step")
+        .expect("recursive_step fixture");
+    let opening_oracle = recursive_step
+        .exported_opening_proof_oracle
+        .as_ref()
+        .expect("recursive_step should include opening proof oracle");
+
+    assert_eq!(opening_oracle.opening_prechallenges_hex.len(), 15);
+    assert!(opening_oracle.expected_sg.x.starts_with("0x"));
+    assert!(opening_oracle.expected_sg.y.starts_with("0x"));
 }
 
 #[test]
@@ -1159,6 +1255,84 @@ fn test_lowered_prev_challenges_match_exported_backend_prev_challenges() {
         }
         assert_poly_comm_matches_exported(&actual.comm, &expected.comm);
     }
+}
+
+#[test]
+fn test_lowered_recursive_opening_prechallenges_diverge_from_exported_oracle_at_index_zero() {
+    let bundle = parse_real_simple_chain_bundle();
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let exported = request
+        .exported_opening_proof_oracle
+        .as_ref()
+        .expect("recursive_step should include exported opening proof oracle");
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_eq!(
+        first_opening_prechallenge_mismatch(&lowered, exported),
+        Some(0),
+    );
+}
+
+#[test]
+fn test_lowered_base_case_opening_prechallenges_diverge_from_exported_oracle_at_index_zero() {
+    let bundle = parse_real_simple_chain_bundle();
+    let request = bundle
+        .request_for_fixture("base_case")
+        .expect("base_case fixture request");
+    let exported = request
+        .exported_opening_proof_oracle
+        .as_ref()
+        .expect("base_case should include exported opening proof oracle");
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_eq!(
+        first_opening_prechallenge_mismatch(&lowered, exported),
+        Some(0),
+    );
+}
+
+#[test]
+fn test_lowered_recursive_opening_sg_differs_from_exported_expected_sg() {
+    let bundle = parse_real_simple_chain_bundle();
+    let request = bundle
+        .request_for_fixture("recursive_step")
+        .expect("recursive_step fixture request");
+    let exported = request
+        .exported_opening_proof_oracle
+        .as_ref()
+        .expect("recursive_step should include exported opening proof oracle");
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_ne!(
+        normalize_hex(&field_to_hex(lowered.proof.proof.sg.x)),
+        normalize_hex(&exported.expected_sg.x),
+        "recursive_step opening sg unexpectedly matched Mina's expected sg x-coordinate",
+    );
+}
+
+#[test]
+fn test_lowered_base_case_opening_sg_differs_from_exported_expected_sg() {
+    let bundle = parse_real_simple_chain_bundle();
+    let request = bundle
+        .request_for_fixture("base_case")
+        .expect("base_case fixture request");
+    let exported = request
+        .exported_opening_proof_oracle
+        .as_ref()
+        .expect("base_case should include exported opening proof oracle");
+    let lowered =
+        lower_simple_chain_raw_wrap_artifacts(&request).expect("raw wrap artifacts should parse");
+
+    assert_ne!(
+        normalize_hex(&field_to_hex(lowered.proof.proof.sg.x)),
+        normalize_hex(&exported.expected_sg.x),
+        "base_case opening sg unexpectedly matched Mina's expected sg x-coordinate",
+    );
 }
 
 #[test]
