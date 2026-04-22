@@ -2230,7 +2230,7 @@ dependencies = [
  "internal-tracing",
  "itertools 0.12.1",
  "log",
- "mina-curves 0.4.1",
+ "mina-curves",
  "mina-poseidon",
  "num-bigint 0.4.6",
  "num-integer",
@@ -2415,18 +2415,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mina-curves"
-version = "0.6.0"
-source = "git+https://github.com/o1-labs/proof-systems?rev=878e3758ff6e81e708a11e4b0286908cecbb3dfa#878e3758ff6e81e708a11e4b0286908cecbb3dfa"
-dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-std 0.5.0",
- "num-bigint 0.4.6",
-]
-
-[[package]]
 name = "mina-poseidon"
 version = "0.4.1"
 dependencies = [
@@ -2434,7 +2422,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-poly",
  "ark-serialize 0.5.0",
- "mina-curves 0.4.1",
+ "mina-curves",
  "o1-utils",
  "once_cell",
  "rand 0.8.5",
@@ -2686,7 +2674,6 @@ name = "o1-verifier"
 version = "0.1.0"
 dependencies = [
  "o1-verifier-lib",
- "rand 0.8.5",
  "rmp-serde",
  "sp1-zkvm",
 ]
@@ -2699,7 +2686,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "base64 0.13.1",
  "clap",
- "mina-curves 0.6.0",
+ "mina-curves",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -2717,10 +2704,9 @@ dependencies = [
  "base64 0.13.1",
  "groupmap",
  "kimchi",
- "mina-curves 0.4.1",
+ "mina-curves",
  "mina-poseidon",
  "poly-commitment",
- "rand 0.8.5",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -3210,7 +3196,7 @@ dependencies = [
  "groupmap",
  "hex",
  "itertools 0.12.1",
- "mina-curves 0.4.1",
+ "mina-curves",
  "mina-poseidon",
  "num-bigint 0.4.6",
  "o1-utils",

@@ -7,7 +7,6 @@ edition = "2021"
 o1-verifier-lib = { path = "../o1-verifier-lib" }
 sp1-zkvm = { workspace = true }
 rmp-serde = { version = "1", default-features = false }
-rand = { version = "0.8", default-features = false }
 
 [build-dependencies]
 o1-verifier-lib = { path = "../o1-verifier-lib", features = ["std"] }
