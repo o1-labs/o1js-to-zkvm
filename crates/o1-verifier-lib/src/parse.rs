@@ -63,9 +63,11 @@ pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
     let h = parse_srs_point(&circuit.srs[0]);
     let g: Vec<Vesta> = circuit.srs[1..].iter().map(parse_srs_point).collect();
 
-    let mut srs = SRS::<Vesta>::default();
-    srs.h = h;
-    srs.g = g;
+    let srs = SRS::<Vesta> {
+        h,
+        g,
+        ..SRS::<Vesta>::default()
+    };
     let srs_bytes = rmp_serde::to_vec(&srs).expect("failed to serialize SRS to msgpack");
 
     (vi_bytes, srs_bytes)

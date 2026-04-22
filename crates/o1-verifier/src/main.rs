@@ -15,8 +15,7 @@ pub fn main() {
     let proof = rmp_serde::from_slice(&proof_bytes).expect("failed to deserialize proof");
     let public_input = deserialize_public_inputs(&public_input_bytes);
 
-    let mut rng = rand::rngs::OsRng;
-    let valid = verify_kimchi_proof(&vi, &proof, &public_input, &mut rng);
+    let valid = verify_kimchi_proof(&vi, &proof, &public_input);
 
     sp1_zkvm::io::commit(&valid);
 }

@@ -8,7 +8,7 @@ use kimchi::circuits::constraints::FeatureFlags;
 use kimchi::curve::KimchiCurve;
 use kimchi::linearization::expr_linearization;
 use kimchi::proof::ProverProof;
-use kimchi::verifier::verify_with_rng;
+use kimchi::verifier::verify;
 use kimchi::verifier_index::VerifierIndex;
 use mina_curves::pasta::{Fp, Vesta, VestaParameters};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
@@ -72,21 +72,18 @@ pub fn load_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> VestaVerifierIn
 }
 
 /// Verify a Kimchi proof against a VerifierIndex.
-pub fn verify_kimchi_proof<R: rand::RngCore + rand::CryptoRng>(
+pub fn verify_kimchi_proof(
     vi: &VestaVerifierIndex,
     proof: &VestaProof,
     public_input: &[Fp],
-    rng: &mut R,
 ) -> bool {
     let group_map = <Vesta as CommitmentCurve>::Map::setup();
-    verify_with_rng::<
-        FULL_ROUNDS,
-        Vesta,
-        BaseSponge,
-        ScalarSponge,
-        OpeningProof<Vesta, FULL_ROUNDS>,
-        _,
-    >(&group_map, vi, proof, public_input, rng)
+    verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>>(
+        &group_map,
+        vi,
+        proof,
+        public_input,
+    )
     .is_ok()
 }
 
