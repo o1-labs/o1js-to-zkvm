@@ -18,6 +18,8 @@ use crate::pickles_error::PicklesError;
 /// in `mina-rust`, but keeps a local trait so we can evolve the dependency story
 /// independently.
 pub trait AppState {
+    /// Encode the application statement into the exact `Fp` sequence that
+    /// Pickles hashes into `messages_for_next_step_proof`.
     fn to_field_elements(&self) -> Result<Vec<Fp>, PicklesError>;
 }
 
@@ -28,6 +30,7 @@ pub struct FieldVectorAppState {
 }
 
 impl AppState for FieldVectorAppState {
+    /// Reuse a caller-provided app-state encoding without further rewriting.
     fn to_field_elements(&self) -> Result<Vec<Fp>, PicklesError> {
         Ok(self.fields.clone())
     }

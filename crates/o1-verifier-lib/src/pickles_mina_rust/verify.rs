@@ -38,6 +38,12 @@ use crate::pickles_types::{
 };
 use crate::verify_wrap_kimchi_proof;
 
+/// Serialize a field element back into the canonical hex shape used by the
+/// Mina exporter.
+///
+/// This is mainly used when the `mina-rust`-aligned path has already lowered a
+/// Kimchi verifier object in Rust but still needs to reassemble Pickles-level
+/// messages that are defined over exporter-style curve points.
 fn field_to_hex<F: PrimeField>(field: F) -> String {
     let bytes = field.into_bigint().to_bytes_be();
     if bytes.is_empty() {
@@ -53,6 +59,8 @@ fn field_to_hex<F: PrimeField>(field: F) -> String {
     }
 }
 
+/// Parse one exporter `Fp` atom back into the scalar field used by Pickles step
+/// messages and deferred values.
 fn parse_hex_field_fp(hex: &str) -> Result<Fp, PicklesError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     if hex.is_empty() {
@@ -72,6 +80,11 @@ fn parse_hex_field_fp(hex: &str) -> Result<Fp, PicklesError> {
     Ok(Fp::from_be_bytes_mod_order(&bytes))
 }
 
+/// Pack Mina's `hex64` limb encoding into an `Fp`.
+///
+/// Pickles uses this representation for compressed scalar challenges inside the
+/// side-loaded proof metadata. The little-endian limb order here is part of the
+/// Pickles encoding boundary, not a generic field parser.
 fn pack_hex64_limbs_to_field_fp(limbs: &[String]) -> Result<Fp, PicklesError> {
     let mut bytes = Vec::with_capacity(limbs.len() * 8);
     for limb in limbs {
@@ -83,12 +96,19 @@ fn pack_hex64_limbs_to_field_fp(limbs: &[String]) -> Result<Fp, PicklesError> {
     Ok(Fp::from_le_bytes_mod_order(&bytes))
 }
 
+/// Turn one exported step-side bulletproof prechallenge into the field element
+/// that Pickles actually hashes into `messages_for_next_step_proof`.
+///
+/// This is the endomorphism-based compression step that sits above Kimchi and
+/// is specific to Pickles' recursive message format.
 fn step_bulletproof_challenge_to_field(challenge: &BulletproofChallengeHex) -> Result<Fp, PicklesError> {
     let packed = pack_hex64_limbs_to_field_fp(&challenge.prechallenge_inner)?;
     let (_, endo) = Vesta::endos();
     Ok(ScalarChallenge::new(packed).to_field(endo))
 }
 
+/// Re-encode one lowered verifier-index commitment into the exporter point
+/// format used by Pickles message hashing.
 fn curve_point_hex_from_pallas(point: Pallas) -> CurvePointHex {
     CurvePointHex {
         x: field_to_hex(point.x),
@@ -96,6 +116,12 @@ fn curve_point_hex_from_pallas(point: Pallas) -> CurvePointHex {
     }
 }
 
+/// Extract the verifier-index commitments that Pickles carries forward inside
+/// `messages_for_next_step_proof`.
+///
+/// This is the part of the wrap verification key that the recursive step proof
+/// commits to above Kimchi, before the final prepared statement is packed into
+/// wrap public input.
 fn build_dlog_plonk_index_evals(
     lowered: &crate::pickles_lowering::LoweredRawWrapArtifacts,
 ) -> DlogPlonkVerificationKeyEvals {
@@ -113,6 +139,11 @@ fn build_dlog_plonk_index_evals(
     }
 }
 
+/// Reconstruct `messages_for_next_wrap_proof` from side-loaded proof metadata.
+///
+/// On the Pickles side this message is the compact recursive payload that keeps
+/// only the wrap challenge-polynomial commitment and the old bulletproof
+/// challenges needed by the next wrap verifier invocation.
 fn build_wrap_message(metadata: &SideLoadedProofMetadata) -> Result<MessagesForNextWrapProof, PicklesError> {
     Ok(MessagesForNextWrapProof {
         challenge_polynomial_commitment: metadata.wrap_challenge_polynomial_commitment.clone(),
@@ -132,6 +163,12 @@ fn build_wrap_message(metadata: &SideLoadedProofMetadata) -> Result<MessagesForN
     })
 }
 
+/// Reconstruct `messages_for_next_step_proof` from the application statement,
+/// selected verifier-index commitments, and next-step challenge data.
+///
+/// This is the Pickles-specific digest that ties the recursive statement to the
+/// step verification key and the next-step bulletproof challenges before the
+/// wrap verifier ever sees a Kimchi public-input vector.
 fn build_step_message(
     request: &PicklesVerifyRequest,
     metadata: &SideLoadedProofMetadata,
@@ -159,6 +196,20 @@ fn build_step_message(
     })
 }
 
+/// Assemble the Pickles prepared wrap statement from decoded deferred values
+/// and the two recursive message digests.
+///
+/// This is the last Pickles-native object before Kimchi verification. It folds
+/// together:
+/// - deferred PLONK values such as `combined_inner_product`, `b`, `xi`, and
+///   the compressed challenge scalars,
+/// - branch-data describing how many proofs were verified recursively,
+/// - `sponge_digest_before_evaluations`,
+/// - `messages_for_next_wrap_proof`,
+/// - `messages_for_next_step_proof`.
+///
+/// `PreparedStatement::to_public_input` then packs this object into the exact
+/// wrap public-input vector consumed by Kimchi.
 fn build_prepared_statement(
     request: &PicklesVerifyRequest,
     metadata: &SideLoadedProofMetadata,
@@ -241,6 +292,8 @@ fn build_prepared_statement(
     })
 }
 
+/// Decode one fixed-width `hex64` limb array from Mina's scalar-challenge
+/// encoding into raw `u64` limbs.
 fn hex64_limbs_to_u64_array<const N: usize>(limbs: &[String]) -> Result<[u64; N], PicklesError> {
     let parsed = limbs
         .iter()
@@ -258,8 +311,13 @@ fn hex64_limbs_to_u64_array<const N: usize>(limbs: &[String]) -> Result<[u64; N]
     })
 }
 
-/// Lower a request into the fully assembled wrap verifier input using the
-/// `mina-rust`-aligned path as far as currently implemented.
+/// Lower one exported Pickles request into the exact wrap-verifier bundle that
+/// the Kimchi backend consumes.
+///
+/// This function is the main `mina-rust`-aligned Pickles pipeline in Rust:
+/// decode side-loaded Pickles metadata, rebuild the recursive messages and
+/// deferred-value statement, materialize the padded wrap proof, and finally
+/// produce `(verifier_index, proof, public_input)` for Kimchi.
 pub fn lower_pickles_with_mina_rust_model(
     request: &PicklesVerifyRequest,
 ) -> Result<LoweredWrapVerification, PicklesError> {
@@ -278,7 +336,8 @@ pub fn lower_pickles_with_mina_rust_model(
     })
 }
 
-/// High-level Pickles verification entrypoint aligned with `mina-rust`.
+/// Execute Pickles verification through the `mina-rust`-aligned lowering path
+/// and then hand the resulting wrap proof to the Kimchi verifier.
 pub fn verify_pickles_with_mina_rust_model<R: RngCore + CryptoRng>(
     request: &PicklesVerifyRequest,
     rng: &mut R,

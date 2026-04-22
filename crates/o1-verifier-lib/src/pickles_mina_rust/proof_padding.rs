@@ -27,8 +27,9 @@ use crate::pickles_types::{
 };
 use crate::PallasProof;
 
-/// Return the fixed padding commitment used by `mina-rust` when a recursive
-/// proof has fewer challenge-polynomial commitments than the verifier expects.
+/// Return the fixed dummy challenge-polynomial commitment that Pickles inserts
+/// when the recursive proof carries fewer commitments than the wrap verifier
+/// expects.
 fn challenge_polynomial_commitment_padding() -> PolyComm<Pallas> {
     let x = Fp::from_str("8063668238751197448664615329057427953229339439010717262869116690340613895496")
         .expect("valid mina-rust padding x-coordinate");
@@ -38,7 +39,8 @@ fn challenge_polynomial_commitment_padding() -> PolyComm<Pallas> {
     PolyComm::new(vec![Pallas::new_unchecked(x, y)])
 }
 
-/// Parse one canonical hex `Fp` value used in exporter-side curve coordinates.
+/// Parse one exporter-side coordinate back into the `Fp` used by the wrap
+/// proof's Pallas commitments.
 fn parse_hex_field_fp(hex: &str) -> Result<Fp, PicklesError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     if hex.is_empty() {
@@ -58,15 +60,19 @@ fn parse_hex_field_fp(hex: &str) -> Result<Fp, PicklesError> {
     Ok(Fp::from_be_bytes_mod_order(&bytes))
 }
 
-/// Decode one exported affine Pallas point from hex coordinates.
+/// Decode one exported wrap commitment into a Pallas affine point.
 fn parse_curve_point_hex_pallas(point: &CurvePointHex) -> Result<Pallas, PicklesError> {
     let x = parse_hex_field_fp(&point.x)?;
     let y = parse_hex_field_fp(&point.y)?;
     Ok(Pallas::new_unchecked(x, y))
 }
 
-/// Convert one exported wrap bulletproof challenge into the field element used
-/// by the backend recursion accumulator.
+/// Convert one exported wrap bulletproof prechallenge into the field element
+/// stored inside Kimchi's recursion accumulator.
+///
+/// This is the Pickles-side endomorphism conversion that turns compressed wrap
+/// challenges into the backend values paired with challenge-polynomial
+/// commitments in `prev_challenges`.
 pub(crate) fn wrap_bulletproof_challenge_to_field(
     challenge: &BulletproofChallengeHex,
 ) -> Result<Fq, PicklesError> {
@@ -89,11 +95,14 @@ pub(crate) fn wrap_bulletproof_challenge_to_field(
     Ok(ScalarChallenge::new(challenge).to_field(endo))
 }
 
-/// Materialize a verification-ready wrap proof from Mina-side artifacts.
+/// Materialize the verifier-ready wrap proof expected by Kimchi from the
+/// exporter request.
 ///
-/// At the current stage this still depends on the existing raw-wrap proof
-/// parser, but replaces the legacy `prev_challenges` reconstruction with the
-/// `mina-rust` padding model.
+/// The raw exported wrap proof is still missing one Pickles layer: the padded
+/// recursion accumulator stored in `prev_challenges`. This function rebuilds
+/// that accumulator in the same shape used by `mina-rust`, pairing each wrap
+/// bulletproof challenge vector with the correct challenge-polynomial
+/// commitment before the proof is handed to Kimchi.
 pub fn make_padded_wrap_proof_from_request(
     request: &PicklesVerifyRequest,
 ) -> Result<PallasProof, PicklesError> {

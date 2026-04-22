@@ -19,6 +19,8 @@ pub struct ShiftedValue<F> {
 }
 
 impl<F> ShiftedValue<F> {
+    /// Wrap a value that has already been moved into Pickles' shifted
+    /// representation.
     pub fn new(shifted: F) -> Self {
         Self { shifted }
     }

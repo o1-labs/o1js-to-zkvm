@@ -25,11 +25,19 @@ pub struct MessagesForNextWrapProof {
 }
 
 impl MessagesForNextWrapProof {
+    /// Hash `messages_for_next_wrap_proof` into the 4-limb digest embedded in
+    /// the Pickles prepared statement.
+    ///
+    /// This digest is one of the recursive artifacts that survives above
+    /// Kimchi: the circuit checks only a compact message, and the external
+    /// Pickles verifier must replay the same hash before wrap verification.
     pub fn hash(&self) -> Result<[u64; 4], PicklesError> {
         let field = poseidon_digest_fq(&self.to_fields()?)?;
         Ok(field.into_bigint().0)
     }
 
+    /// Encode the wrap recursive message into the exact `Fq` absorption order
+    /// used by Pickles.
     fn to_fields(&self) -> Result<Vec<Fq>, PicklesError> {
         const NFIELDS: usize = 32;
 
@@ -63,6 +71,9 @@ impl MessagesForNextWrapProof {
         Ok(fields)
     }
 
+    /// Return the hard-coded dummy bulletproof-challenge vector that Pickles
+    /// prepends when fewer old challenges are present than the wrap verifier
+    /// expects.
     fn dummy_padding() -> [Fq; 15] {
         let f = |s: &str| {
             s.parse::<Fq>()
@@ -98,11 +109,18 @@ pub struct MessagesForNextStepProof<A: AppState> {
 }
 
 impl<A: AppState> MessagesForNextStepProof<A> {
+    /// Hash `messages_for_next_step_proof` into the 4-limb digest embedded in
+    /// the Pickles prepared statement.
+    ///
+    /// This is the step-side recursive message that binds app state, the dlog
+    /// Plonk index commitments, and the next-step challenge data.
     pub fn hash(&self) -> Result<[u64; 4], PicklesError> {
         let field = poseidon_digest_fp(&self.to_fields()?)?;
         Ok(field.into_bigint().0)
     }
 
+    /// Encode the step recursive message into the exact `Fp` absorption order
+    /// expected by Pickles.
     fn to_fields(&self) -> Result<Vec<Fp>, PicklesError> {
         let mut fields = Vec::with_capacity(93);
 
@@ -134,6 +152,8 @@ impl<A: AppState> MessagesForNextStepProof<A> {
     }
 }
 
+/// Parse one exporter field atom into the Pasta `Fp` used by Pickles step
+/// transcripts.
 fn parse_hex_field_fp(hex: &str) -> Result<Fp, PicklesError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     if hex.is_empty() {
@@ -153,6 +173,8 @@ fn parse_hex_field_fp(hex: &str) -> Result<Fp, PicklesError> {
     Ok(Fp::from_be_bytes_mod_order(&bytes))
 }
 
+/// Parse one exporter field atom into the Pasta `Fq` used by Pickles wrap
+/// transcripts.
 fn parse_hex_field_fq(hex: &str) -> Result<Fq, PicklesError> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     if hex.is_empty() {
@@ -172,14 +194,19 @@ fn parse_hex_field_fq(hex: &str) -> Result<Fq, PicklesError> {
     Ok(Fq::from_be_bytes_mod_order(&bytes))
 }
 
+/// Convert one exported affine commitment into the two `Fp` coordinates that
+/// Pickles absorbs into the step-side Poseidon transcript.
 fn fp_curve_point_to_fields(point: &CurvePointHex) -> Result<[Fp; 2], PicklesError> {
     Ok([parse_hex_field_fp(&point.x)?, parse_hex_field_fp(&point.y)?])
 }
 
+/// Convert one exported affine commitment into the two `Fq` coordinates that
+/// Pickles absorbs into the wrap-side Poseidon transcript.
 fn fq_curve_point_to_fields(point: &CurvePointHex) -> Result<[Fq; 2], PicklesError> {
     Ok([parse_hex_field_fq(&point.x)?, parse_hex_field_fq(&point.y)?])
 }
 
+/// Replay the Pickles step transcript hash over an `Fp` absorption sequence.
 fn poseidon_digest_fp(fields: &[Fp]) -> Result<Fp, PicklesError> {
     let mut sponge = ArithmeticSponge::<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>::new(
         fp_kimchi::static_params(),
@@ -188,6 +215,7 @@ fn poseidon_digest_fp(fields: &[Fp]) -> Result<Fp, PicklesError> {
     Ok(sponge.squeeze())
 }
 
+/// Replay the Pickles wrap transcript hash over an `Fq` absorption sequence.
 fn poseidon_digest_fq(fields: &[Fq]) -> Result<Fq, PicklesError> {
     let mut sponge = ArithmeticSponge::<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>::new(
         fq_kimchi::static_params(),

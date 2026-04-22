@@ -11,7 +11,13 @@ use crate::pickles_mina_rust::types::{BranchData, PreparedStatement, WrapVerific
 use crate::pickles_types::PlonkFeatureFlags;
 
 impl PreparedStatement {
-    /// Pack the wrap prepared statement into the final Kimchi public input.
+    /// Pack the Pickles prepared wrap statement into the exact field vector
+    /// consumed by the Kimchi wrap verifier.
+    ///
+    /// At this point all Pickles-only work is already done: deferred values,
+    /// recursive message digests, branch-data, and feature flags have been
+    /// assembled above Kimchi. This method only applies the canonical Pickles
+    /// packing order expected by the wrap verifier.
     pub fn to_public_input(
         &self,
         npublic_input: usize,
@@ -72,6 +78,7 @@ impl PreparedStatement {
     }
 }
 
+/// Pack a 4-limb Pickles digest or sponge state into one field element.
 fn four_u64_to_field<F>(v: &[u64; 4]) -> Result<F, PicklesError>
 where
     F: ark_ff::Field + TryFrom<BigInteger256>,
@@ -85,6 +92,7 @@ where
     })
 }
 
+/// Interpret Pickles' 2-limb scalar-challenge encoding as one field element.
 fn two_u64_to_field<F>(v: &[u64; 2]) -> F
 where
     F: ark_ff::Field + TryFrom<BigInteger256>,
@@ -96,6 +104,12 @@ where
     F::try_from(bigint).expect("2-limb challenge field must be valid")
 }
 
+/// Pack Pickles branch-data into the single wrap public-input slot used by the
+/// prepared statement.
+///
+/// This is where `proofs_verified` and `domain_log2` are fused into the branch
+/// descriptor that tells the wrap verifier which recursion branch it is
+/// checking.
 fn pack_branch_data(branch_data: &BranchData) -> Result<Fq, PicklesError> {
     let proofs_verified = match branch_data.proofs_verified {
         0 => 0b00,
@@ -111,6 +125,8 @@ fn pack_branch_data(branch_data: &BranchData) -> Result<Fq, PicklesError> {
     Ok(Fq::from(branch_data))
 }
 
+/// Expand the PLONK feature flags that Pickles exposes explicitly in wrap
+/// public input.
 fn feature_flag_values(feature_flags: &PlonkFeatureFlags) -> [bool; 8] {
     [
         feature_flags.range_check0,
@@ -124,6 +140,8 @@ fn feature_flag_values(feature_flags: &PlonkFeatureFlags) -> [bool; 8] {
     ]
 }
 
+/// Determine whether Pickles should expose the lookup tail of the prepared
+/// statement for this branch.
 fn uses_lookup(feature_flags: &PlonkFeatureFlags) -> bool {
     [
         feature_flags.range_check0,
