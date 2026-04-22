@@ -1,3 +1,9 @@
+//! Diagnostic binary for comparing Rust's wrap SRS view against Mina-exported
+//! SRS artifacts.
+//!
+//! The main use is to validate that the `mina-rust`-aligned verification path
+//! is loading the same ordered commitments Mina used for wrap verification.
+
 #![cfg(feature = "std")]
 
 use std::env;
@@ -8,6 +14,8 @@ use o1_verifier_lib::{lower_simple_chain_request, parse_simple_chain_bundle_with
 use o1_verifier_lib::pickles_types::{CurvePointHex, PolyCommHex};
 use poly_commitment::SRS as _;
 
+/// Normalize hex strings before comparing exporter data with Rust-serialized
+/// field elements.
 fn normalize_hex(hex: &str) -> String {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
     let trimmed = hex.trim_start_matches('0');
@@ -18,6 +26,7 @@ fn normalize_hex(hex: &str) -> String {
     }
 }
 
+/// Serialize a field element back into the canonical exporter hex shape.
 fn field_to_hex<F: PrimeField>(field: F) -> String {
     let bytes = field.into_bigint().to_bytes_be();
     if bytes.is_empty() {
@@ -33,6 +42,7 @@ fn field_to_hex<F: PrimeField>(field: F) -> String {
     }
 }
 
+/// Compare one affine point from Rust against the Mina-exported point.
 fn compare_point(
     actual_x: &str,
     actual_y: &str,
@@ -55,6 +65,8 @@ fn compare_point(
     None
 }
 
+/// Compare one polynomial commitment from Rust against the Mina-exported
+/// commitment view.
 fn compare_poly_comm(
     actual: &poly_commitment::commitment::PolyComm<mina_curves::pasta::Pallas>,
     expected: &PolyCommHex,
@@ -83,6 +95,8 @@ fn compare_poly_comm(
     None
 }
 
+/// Compare the lowered wrap SRS against Mina's exported SRS identity data and
+/// return a process status suitable for shell diagnostics.
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let bundle_path = args

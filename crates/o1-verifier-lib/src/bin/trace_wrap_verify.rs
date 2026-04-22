@@ -1,3 +1,10 @@
+//! Timing and boundary tracer for the final wrap-verification path.
+//!
+//! This binary is used when the high-level Pickles verifier reaches Kimchi but
+//! still returns the wrong answer or stalls. It splits the wrap-verification
+//! path into major phases such as public-input commitment construction, oracle
+//! replay, batch construction, and the final opening-proof check.
+
 #![cfg(feature = "std")]
 
 use std::env;
@@ -30,6 +37,8 @@ const REAL_SIMPLE_CHAIN_BUNDLE_JSON: &str =
 const REAL_SIMPLE_CHAIN_URS_GENERATORS_JSON: &str =
     include_str!("../../../../fixtures/simple_chain_real_bundle.urs_generators.json");
 
+/// Execute the traced wrap-verification flow for one fixture and print the time
+/// spent in each major Kimchi-side phase.
 fn main() {
     let bundle = parse_simple_chain_bundle_with_urs_sidecar(
         REAL_SIMPLE_CHAIN_BUNDLE_JSON,
@@ -88,6 +97,10 @@ fn main() {
     println!("result: {ok}");
 }
 
+/// Rebuild the public-input commitment that Kimchi feeds into oracle replay.
+///
+/// This is the first expensive verifier step after Pickles has already lowered
+/// the prepared statement into raw wrap public input.
 fn build_public_comm(
     context: &Context<'_, { FULL_ROUNDS }, Pallas, OpeningProof<Pallas, FULL_ROUNDS>, IpaSRS<Pallas>>,
 ) -> PolyComm<Pallas> {
@@ -130,6 +143,12 @@ fn build_public_comm(
     }
 }
 
+/// Recreate the exact batch opening-check structure that Kimchi feeds into IPA
+/// verification for the wrap proof.
+///
+/// This lets the tracer measure the boundary between oracle replay and the
+/// final opening-proof check without going through the entire verifier as one
+/// opaque call.
 fn build_batch<'a>(
     context: &'a Context<
         'a,

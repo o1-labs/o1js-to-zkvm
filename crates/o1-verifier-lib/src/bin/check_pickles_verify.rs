@@ -1,3 +1,9 @@
+//! Minimal runner for the `mina-rust`-aligned Pickles verification path.
+//!
+//! This binary answers one narrow question: given the checked-in Mina-exported
+//! fixtures, does the current Rust Pickles pipeline return `Ok(true)`,
+//! `Ok(false)`, or an error for each named fixture?
+
 #![cfg(feature = "std")]
 
 use std::env;
@@ -13,6 +19,8 @@ const REAL_SIMPLE_CHAIN_BUNDLE_JSON: &str =
 const REAL_SIMPLE_CHAIN_URS_GENERATORS_JSON: &str =
     include_str!("../../../../fixtures/simple_chain_real_bundle.urs_generators.json");
 
+/// Run the high-level Pickles verifier on one or more fixture names and print
+/// timing plus the final boolean/error result.
 fn main() {
     let bundle = parse_simple_chain_bundle_with_urs_sidecar(
         REAL_SIMPLE_CHAIN_BUNDLE_JSON,
