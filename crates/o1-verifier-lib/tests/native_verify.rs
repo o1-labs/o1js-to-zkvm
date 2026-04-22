@@ -7,6 +7,8 @@ const CIRCUIT_JSON: &str = include_str!("../../../fixtures/circuit.json");
 const PROOF_JSON: &str = include_str!("../../../fixtures/proof.json");
 
 #[test]
+// Checks that the raw Kimchi verifier still accepts the checked-in proof
+// fixture.
 fn test_native_verify() {
     let (vi_bytes, srs_bytes) = parse_circuit_json(CIRCUIT_JSON);
     let vi = load_verifier_index(&vi_bytes, &srs_bytes);

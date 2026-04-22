@@ -765,6 +765,7 @@ fn first_opening_prechallenge_mismatch(
 }
 
 #[test]
+// Checks that the small synthetic fixture bundle still parses.
 fn test_parse_simple_chain_bundle() {
     let bundle = parse_simple_chain_bundle(SIMPLE_CHAIN_BUNDLE_JSON).expect("bundle should parse");
 
@@ -785,6 +786,8 @@ fn test_parse_simple_chain_bundle() {
 }
 
 #[test]
+// Checks that the exported backend eval probe is present and has the expected
+// shape.
 fn test_parse_expanded_backend_eval_probe_shape() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -818,6 +821,8 @@ fn test_parse_expanded_backend_eval_probe_shape() {
 }
 
 #[test]
+// Checks that the fixture includes the extra opening-proof data we compare
+// against.
 fn test_parse_opening_proof_oracle_exports() {
     let bundle = parse_real_simple_chain_bundle();
     let recursive_step = bundle
@@ -834,6 +839,8 @@ fn test_parse_opening_proof_oracle_exports() {
 }
 
 #[test]
+// Checks that Rust can decode the recursive_step proof metadata into the
+// structured fields we use later.
 fn test_lower_simple_chain_metadata() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -890,6 +897,7 @@ fn test_lower_simple_chain_metadata() {
 }
 
 #[test]
+// Checks that the same metadata decoder also works on the base_case fixture.
 fn test_lower_simple_chain_base_case_metadata() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -908,6 +916,8 @@ fn test_lower_simple_chain_base_case_metadata() {
 }
 
 #[test]
+// Checks that the current public-input planner matches Mina's 40 wrap input
+// fields for recursive_step.
 fn test_lower_simple_chain_public_input_plan() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -976,6 +986,8 @@ fn test_lower_simple_chain_public_input_plan() {
 }
 
 #[test]
+// Checks that the exact wrap public input and helper fields are present in the
+// exported fixture.
 fn test_parse_exported_wrap_public_input_fields() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1003,6 +1015,8 @@ fn test_parse_exported_wrap_public_input_fields() {
 }
 
 #[test]
+// Checks that prepared-statement packing matches Mina's exported wrap public
+// input exactly.
 fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1096,6 +1110,8 @@ fn test_mina_rust_prepared_statement_matches_exported_wrap_public_input() {
 }
 
 #[test]
+// Checks that the full mina-rust path still lands on the same 40 public-input
+// fields Mina exported.
 fn test_mina_rust_lowered_wrap_verification_matches_exported_public_input() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1123,6 +1139,7 @@ fn test_mina_rust_lowered_wrap_verification_matches_exported_public_input() {
 }
 
 #[test]
+// Checks that Rust reproduces Mina's wrap-side message digest.
 fn test_mina_rust_wrap_message_hash_matches_exported_wrap_field() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1148,6 +1165,7 @@ fn test_mina_rust_wrap_message_hash_matches_exported_wrap_field() {
 }
 
 #[test]
+// Checks that Rust reproduces Mina's step-side message digest.
 fn test_mina_rust_step_message_hash_matches_exported_oracle_field() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1172,6 +1190,8 @@ fn test_mina_rust_step_message_hash_matches_exported_oracle_field() {
 }
 
 #[test]
+// Checks that the exported raw wrap artifacts lower into the Kimchi proof and
+// verifier types we expect.
 fn test_lower_simple_chain_raw_wrap_artifacts() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1200,6 +1220,8 @@ fn test_lower_simple_chain_raw_wrap_artifacts() {
 }
 
 #[test]
+// Checks that the lowered recursive_step wrap proof matches Mina on the main
+// proof commitments and opening-proof core.
 fn test_lowered_recursive_wrap_proof_core_matches_exported_opening_boundary() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1214,6 +1236,8 @@ fn test_lowered_recursive_wrap_proof_core_matches_exported_opening_boundary() {
 }
 
 #[test]
+// Checks the known mismatch between side-loaded `prev_evals` and the backend
+// wrap proof evaluations.
 fn test_recursive_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witness_slot() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1230,6 +1254,7 @@ fn test_recursive_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witnes
 }
 
 #[test]
+// Checks that lowered backend `prev_challenges` match Mina's exported version.
 fn test_lowered_prev_challenges_match_exported_backend_prev_challenges() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1258,6 +1283,8 @@ fn test_lowered_prev_challenges_match_exported_backend_prev_challenges() {
 }
 
 #[test]
+// Checks that the remaining opening-proof mismatch already appears at the first
+// derived prechallenge for recursive_step.
 fn test_lowered_recursive_opening_prechallenges_diverge_from_exported_oracle_at_index_zero() {
     let bundle = parse_real_simple_chain_bundle();
     let request = bundle
@@ -1277,6 +1304,7 @@ fn test_lowered_recursive_opening_prechallenges_diverge_from_exported_oracle_at_
 }
 
 #[test]
+// Checks that the same opening-prechallenge mismatch is present on base_case.
 fn test_lowered_base_case_opening_prechallenges_diverge_from_exported_oracle_at_index_zero() {
     let bundle = parse_real_simple_chain_bundle();
     let request = bundle
@@ -1296,6 +1324,7 @@ fn test_lowered_base_case_opening_prechallenges_diverge_from_exported_oracle_at_
 }
 
 #[test]
+// Checks that recursive_step still derives a different `sg` than Mina expects.
 fn test_lowered_recursive_opening_sg_differs_from_exported_expected_sg() {
     let bundle = parse_real_simple_chain_bundle();
     let request = bundle
@@ -1316,6 +1345,7 @@ fn test_lowered_recursive_opening_sg_differs_from_exported_expected_sg() {
 }
 
 #[test]
+// Checks that the same `sg` mismatch also exists on base_case.
 fn test_lowered_base_case_opening_sg_differs_from_exported_expected_sg() {
     let bundle = parse_real_simple_chain_bundle();
     let request = bundle
@@ -1336,6 +1366,8 @@ fn test_lowered_base_case_opening_sg_differs_from_exported_expected_sg() {
 }
 
 #[test]
+// Checks that all exported recursive_step backend eval probes match the lowered
+// proof.
 fn test_lowered_recursive_wrap_evals_match_exported_backend_probe() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1353,6 +1385,7 @@ fn test_lowered_recursive_wrap_evals_match_exported_backend_probe() {
 }
 
 #[test]
+// Checks that the base_case raw wrap artifacts also lower cleanly.
 fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1381,6 +1414,8 @@ fn test_lower_simple_chain_base_case_raw_wrap_artifacts() {
 }
 
 #[test]
+// Checks that all exported base_case backend eval probes match the lowered
+// proof.
 fn test_lowered_base_case_wrap_evals_match_exported_backend_probe() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1398,6 +1433,8 @@ fn test_lowered_base_case_wrap_evals_match_exported_backend_probe() {
 }
 
 #[test]
+// Checks that the lowered base_case wrap proof matches Mina on the main proof
+// commitments and opening-proof core.
 fn test_lowered_base_case_wrap_proof_core_matches_exported_opening_boundary() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1412,6 +1449,7 @@ fn test_lowered_base_case_wrap_proof_core_matches_exported_opening_boundary() {
 }
 
 #[test]
+// Checks the same `prev_evals` versus backend-evals mismatch on base_case.
 fn test_base_case_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witness_slot() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1428,6 +1466,8 @@ fn test_base_case_wrap_evals_diverge_from_side_loaded_prev_evals_at_first_witnes
 }
 
 #[test]
+// Checks that the mina-rust-style padded proof inserts the fixed dummy
+// commitment and leaves the rest of the wrap proof alone.
 fn test_mina_rust_padded_wrap_proof_uses_padding_commitment() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1463,6 +1503,7 @@ fn test_mina_rust_padded_wrap_proof_uses_padding_commitment() {
 }
 
 #[test]
+// Checks that the same padding rule is applied on base_case.
 fn test_mina_rust_padded_wrap_proof_base_case_uses_padding_commitment() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1483,6 +1524,8 @@ fn test_mina_rust_padded_wrap_proof_base_case_uses_padding_commitment() {
 }
 
 #[test]
+// Checks that full wrap lowering now loads Mina's exported URS and Lagrange
+// basis into the verifier SRS.
 fn test_lower_simple_chain_request_reconstructs_srs() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1550,6 +1593,8 @@ fn test_lower_simple_chain_request_reconstructs_srs() {
 
 #[test]
 #[ignore = "expensive full wrap lagrange-basis comparison against Mina export"]
+// When run explicitly, checks that the full ordered wrap Lagrange basis matches
+// Mina's exported ordering.
 fn test_lower_simple_chain_request_matches_exported_lagrange_commitment_order() {
     let bundle =
         parse_real_simple_chain_bundle();
@@ -1582,6 +1627,8 @@ fn test_lower_simple_chain_request_matches_exported_lagrange_commitment_order() 
 }
 
 #[test]
+// Locks the current verifier behavior: wrap verification reaches Kimchi but
+// still fails with `OpenProof`.
 fn test_verify_simple_chain_recursive_step_reports_current_wrap_failure() {
     let bundle =
         parse_real_simple_chain_bundle();
