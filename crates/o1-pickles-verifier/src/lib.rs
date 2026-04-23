@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+pub mod deferred;
 pub mod parse;
 pub mod statement;
 pub mod wire;
