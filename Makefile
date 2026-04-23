@@ -1,6 +1,8 @@
-.PHONY: help install deps submodules build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests lint-check lint
+.PHONY: help install deps submodules build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests lint-check lint simple-chain-fixtures
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
+SIMPLE_CHAIN_WRAP_VI_FIXTURE := $(CURDIR)/fixtures/simple_chain_wrap_vi.bin
+SIMPLE_CHAIN_WRAP_SRS_FIXTURE := $(CURDIR)/fixtures/simple_chain_wrap_srs.bin
 
 .DEFAULT_GOAL := help
 
@@ -51,3 +53,9 @@ lint: submodules ## Run all linters and formatters with auto-fix
 	cargo fmt -p o1-verifier -p o1-verifier-lib -p o1-verifier-host
 	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
 	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo clippy --all-targets --features std --fix --allow-dirty --allow-staged -- -D warnings
+
+simple-chain-fixtures: submodules ## Regenerate fixtures/simple_chain_wrap_{vi,srs}.bin from the OCaml Simple_chain executable (requires dune; enter the mina nix dev shell first if needed)
+	cd $(CURDIR)/mina && \
+		SIMPLE_CHAIN_WRAP_VI_OUT=$(SIMPLE_CHAIN_WRAP_VI_FIXTURE) \
+		SIMPLE_CHAIN_WRAP_SRS_OUT=$(SIMPLE_CHAIN_WRAP_SRS_FIXTURE) \
+		dune exec src/lib/crypto/pickles/simple_chain/simple_chain.exe
