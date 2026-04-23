@@ -2,7 +2,7 @@ extern crate alloc;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use ark_serialize::CanonicalDeserialize;
+use ark_ff::PrimeField;
 use groupmap::GroupMap;
 use kimchi::circuits::constraints::FeatureFlags;
 use kimchi::curve::KimchiCurve;
@@ -10,32 +10,48 @@ use kimchi::linearization::expr_linearization;
 use kimchi::proof::ProverProof;
 use kimchi::verifier::verify;
 use kimchi::verifier_index::VerifierIndex;
-use mina_curves::pasta::{Fp, Vesta, VestaParameters};
+use mina_curves::pasta::{Pallas, PallasParameters, Vesta, VestaParameters};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::FULL_ROUNDS;
 use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge};
 use poly_commitment::commitment::CommitmentCurve;
 use poly_commitment::ipa::{OpeningProof, SRS};
+use serde::de::DeserializeOwned;
 
 pub type SpongeParams = PlonkSpongeConstantsKimchi;
-pub type BaseSponge = DefaultFqSponge<VestaParameters, SpongeParams, FULL_ROUNDS>;
-pub type ScalarSponge = DefaultFrSponge<Fp, SpongeParams, FULL_ROUNDS>;
+
+// Vesta side (scalar field Fp).
+pub type VestaBaseSponge = DefaultFqSponge<VestaParameters, SpongeParams, FULL_ROUNDS>;
+pub type VestaScalarSponge = DefaultFrSponge<mina_curves::pasta::Fp, SpongeParams, FULL_ROUNDS>;
 pub type VestaVerifierIndex = VerifierIndex<FULL_ROUNDS, Vesta, SRS<Vesta>>;
 pub type VestaProof = ProverProof<Vesta, OpeningProof<Vesta, FULL_ROUNDS>, FULL_ROUNDS>;
 
-pub fn deserialize_public_inputs(bytes: &[u8]) -> Vec<Fp> {
+// Pallas side (scalar field Fq).
+pub type PallasBaseSponge = DefaultFqSponge<PallasParameters, SpongeParams, FULL_ROUNDS>;
+pub type PallasScalarSponge = DefaultFrSponge<mina_curves::pasta::Fq, SpongeParams, FULL_ROUNDS>;
+pub type PallasVerifierIndex = VerifierIndex<FULL_ROUNDS, Pallas, SRS<Pallas>>;
+pub type PallasProof = ProverProof<Pallas, OpeningProof<Pallas, FULL_ROUNDS>, FULL_ROUNDS>;
+
+/// Deserialize a concatenation of 32-byte canonical field-element chunks. Both
+/// Pasta fields fit in 32 bytes.
+pub fn deserialize_public_inputs<F: PrimeField>(bytes: &[u8]) -> Vec<F> {
+    const ELEMENT_SIZE: usize = 32;
     assert!(
-        bytes.len().is_multiple_of(32),
+        bytes.len().is_multiple_of(ELEMENT_SIZE),
         "public input bytes must be a multiple of 32"
     );
     bytes
-        .chunks_exact(32)
-        .map(|chunk| Fp::deserialize_compressed(chunk).expect("invalid Fp element"))
+        .chunks_exact(ELEMENT_SIZE)
+        .map(|chunk| F::deserialize_compressed(chunk).expect("invalid field element"))
         .collect()
 }
 
-/// Reconstruct FeatureFlags from the VerifierIndex optional commitment fields.
-pub fn feature_flags_from_vi(vi: &VestaVerifierIndex) -> FeatureFlags {
+/// Reconstruct FeatureFlags from the VerifierIndex's optional commitment
+/// fields. Works for any curve.
+pub fn feature_flags_from_vi<G>(vi: &VerifierIndex<FULL_ROUNDS, G, SRS<G>>) -> FeatureFlags
+where
+    G: KimchiCurve<FULL_ROUNDS>,
+{
     let lookup_features = vi
         .lookup_index
         .as_ref()
@@ -53,37 +69,72 @@ pub fn feature_flags_from_vi(vi: &VestaVerifierIndex) -> FeatureFlags {
     }
 }
 
-/// Deserialize a VerifierIndex + SRS from msgpack bytes and reconstruct
-/// all #[serde(skip)] fields needed for verification.
-pub fn load_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> VestaVerifierIndex {
-    let mut vi: VestaVerifierIndex =
+/// Deserialize a VerifierIndex + SRS from msgpack bytes and reconstruct every
+/// `#[serde(skip)]` field needed for verification. Generic in the curve.
+pub fn load_verifier_index_generic<G>(
+    vi_bytes: &[u8],
+    srs_bytes: &[u8],
+) -> VerifierIndex<FULL_ROUNDS, G, SRS<G>>
+where
+    G: KimchiCurve<FULL_ROUNDS>,
+    G::BaseField: PrimeField,
+    G::ScalarField: PrimeField,
+    SRS<G>: DeserializeOwned,
+    VerifierIndex<FULL_ROUNDS, G, SRS<G>>: DeserializeOwned,
+{
+    let mut vi: VerifierIndex<FULL_ROUNDS, G, SRS<G>> =
         rmp_serde::from_slice(vi_bytes).expect("failed to deserialize VerifierIndex");
-    let srs: SRS<Vesta> = rmp_serde::from_slice(srs_bytes).expect("failed to deserialize SRS");
+    let srs: SRS<G> = rmp_serde::from_slice(srs_bytes).expect("failed to deserialize SRS");
     vi.srs = Arc::new(srs);
 
-    let (_, endo) = Vesta::endos();
+    let (_, endo) = G::endos();
     vi.endo = *endo;
     let feature_flags = feature_flags_from_vi(&vi);
-    let (linearization, powers_of_alpha) = expr_linearization::<Fp>(Some(&feature_flags), true);
+    let (linearization, powers_of_alpha) =
+        expr_linearization::<G::ScalarField>(Some(&feature_flags), true);
     vi.linearization = linearization;
     vi.powers_of_alpha = powers_of_alpha;
 
     vi
 }
 
-/// Verify a Kimchi proof against a VerifierIndex.
-pub fn verify_kimchi_proof(
+pub fn load_vesta_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> VestaVerifierIndex {
+    load_verifier_index_generic::<Vesta>(vi_bytes, srs_bytes)
+}
+
+pub fn load_pallas_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> PallasVerifierIndex {
+    load_verifier_index_generic::<Pallas>(vi_bytes, srs_bytes)
+}
+
+pub fn verify_vesta_kimchi_proof(
     vi: &VestaVerifierIndex,
     proof: &VestaProof,
-    public_input: &[Fp],
+    public_input: &[mina_curves::pasta::Fp],
 ) -> bool {
     let group_map = <Vesta as CommitmentCurve>::Map::setup();
-    verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>>(
-        &group_map,
-        vi,
-        proof,
-        public_input,
-    )
+    verify::<
+        FULL_ROUNDS,
+        Vesta,
+        VestaBaseSponge,
+        VestaScalarSponge,
+        OpeningProof<Vesta, FULL_ROUNDS>,
+    >(&group_map, vi, proof, public_input)
+    .is_ok()
+}
+
+pub fn verify_pallas_kimchi_proof(
+    vi: &PallasVerifierIndex,
+    proof: &PallasProof,
+    public_input: &[mina_curves::pasta::Fq],
+) -> bool {
+    let group_map = <Pallas as CommitmentCurve>::Map::setup();
+    verify::<
+        FULL_ROUNDS,
+        Pallas,
+        PallasBaseSponge,
+        PallasScalarSponge,
+        OpeningProof<Pallas, FULL_ROUNDS>,
+    >(&group_map, vi, proof, public_input)
     .is_ok()
 }
 

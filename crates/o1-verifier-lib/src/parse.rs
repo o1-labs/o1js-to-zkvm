@@ -1,8 +1,14 @@
 use std::str::FromStr;
 
-use ark_serialize::CanonicalSerialize;
-use mina_curves::pasta::{Fp, Fq, Vesta};
+use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
+use ark_ff::PrimeField;
+use kimchi::curve::KimchiCurve;
+use kimchi::verifier_index::VerifierIndex;
+use mina_curves::pasta::{Fp, Fq, PallasParameters, VestaParameters};
+use mina_poseidon::pasta::FULL_ROUNDS;
 use poly_commitment::ipa::SRS;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 #[derive(serde::Deserialize)]
 pub struct CircuitDescription {
@@ -30,20 +36,39 @@ pub struct ProofJson {
     pub public_input_fields: Vec<String>,
 }
 
-fn parse_srs_point(p: &SrsPoint) -> Vesta {
+type VerifierIndexFor<P> = VerifierIndex<FULL_ROUNDS, Affine<P>, SRS<Affine<P>>>;
+
+/// Parse one `OrInfinity` SRS point into an affine group element. Decodes the
+/// coordinates in the curve's base field.
+fn parse_srs_point<P>(p: &SrsPoint) -> Affine<P>
+where
+    P: SWCurveConfig,
+    P::BaseField: PrimeField + FromStr,
+{
     match p {
-        SrsPoint::Infinity(()) => Vesta::default(),
+        SrsPoint::Infinity(()) => Affine::<P>::identity(),
         SrsPoint::Point { x, y } => {
-            let x = Fq::from_str(x).expect("invalid SRS x coordinate");
-            let y = Fq::from_str(y).expect("invalid SRS y coordinate");
-            Vesta::new_unchecked(x, y)
+            let x = P::BaseField::from_str(x)
+                .ok()
+                .expect("invalid SRS x coordinate");
+            let y = P::BaseField::from_str(y)
+                .ok()
+                .expect("invalid SRS y coordinate");
+            Affine::<P>::new_unchecked(x, y)
         }
     }
 }
 
-/// Parse a circuit description JSON and produce msgpack bytes for the
-/// VerifierIndex and SRS, suitable for `load_verifier_index()`.
-pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
+/// Parse a `{verificationKey, srs}` JSON bundle and produce msgpack bytes for
+/// the VerifierIndex and SRS suitable for `load_verifier_index_generic`.
+/// Generic over the curve's SW config [P].
+pub fn parse_circuit_json_generic<P>(circuit_json: &str) -> (Vec<u8>, Vec<u8>)
+where
+    P: SWCurveConfig,
+    P::BaseField: PrimeField + FromStr,
+    Affine<P>: KimchiCurve<FULL_ROUNDS>,
+    VerifierIndexFor<P>: DeserializeOwned + Serialize,
+{
     let circuit: CircuitDescription =
         serde_json::from_str(circuit_json).expect("failed to parse circuit JSON");
 
@@ -52,7 +77,7 @@ pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
     )
     .expect("verificationKey is not valid UTF-8");
 
-    let vi: crate::VestaVerifierIndex =
+    let vi: VerifierIndexFor<P> =
         serde_json::from_str(&vk_json).expect("failed to deserialize VerifierIndex from JSON");
     let vi_bytes = rmp_serde::to_vec(&vi).expect("failed to serialize VerifierIndex to msgpack");
 
@@ -60,31 +85,36 @@ pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
         circuit.srs.len() >= 2,
         "SRS must have at least h + one g element"
     );
-    let h = parse_srs_point(&circuit.srs[0]);
-    let g: Vec<Vesta> = circuit.srs[1..].iter().map(parse_srs_point).collect();
+    let h = parse_srs_point::<P>(&circuit.srs[0]);
+    let g: Vec<Affine<P>> = circuit.srs[1..].iter().map(parse_srs_point::<P>).collect();
 
-    let srs = SRS::<Vesta> {
+    let srs = SRS::<Affine<P>> {
         h,
         g,
-        ..SRS::<Vesta>::default()
+        ..SRS::<Affine<P>>::default()
     };
     let srs_bytes = rmp_serde::to_vec(&srs).expect("failed to serialize SRS to msgpack");
 
     (vi_bytes, srs_bytes)
 }
 
-/// Parse a proof JSON and return the raw proof bytes (msgpack) and
-/// serialized public inputs (32 bytes per Fp element, canonical form).
-pub fn parse_proof_json(proof_json: &str) -> (Vec<u8>, Vec<u8>) {
+/// Parse a proof JSON and return raw proof bytes (msgpack) and serialized
+/// public inputs (canonical, per field element). Generic over the public input
+/// field [F].
+pub fn parse_proof_json_generic<F: PrimeField + FromStr>(proof_json: &str) -> (Vec<u8>, Vec<u8>) {
     let output: ProofOutput = serde_json::from_str(proof_json).expect("failed to parse proof JSON");
 
     let proof_bytes = base64::decode(&output.proof.proof).expect("invalid base64 in proof");
 
-    let public_input: Vec<Fp> = output
+    let public_input: Vec<F> = output
         .proof
         .public_input_fields
         .iter()
-        .map(|s| Fp::from_str(s).expect("invalid public input field element"))
+        .map(|s| {
+            F::from_str(s)
+                .ok()
+                .expect("invalid public input field element")
+        })
         .collect();
 
     let mut pub_bytes = Vec::with_capacity(public_input.len() * 32);
@@ -95,4 +125,22 @@ pub fn parse_proof_json(proof_json: &str) -> (Vec<u8>, Vec<u8>) {
     }
 
     (proof_bytes, pub_bytes)
+}
+
+// --- Curve-specific wrappers ---
+
+pub fn parse_vesta_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
+    parse_circuit_json_generic::<VestaParameters>(circuit_json)
+}
+
+pub fn parse_pallas_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
+    parse_circuit_json_generic::<PallasParameters>(circuit_json)
+}
+
+pub fn parse_vesta_proof_json(proof_json: &str) -> (Vec<u8>, Vec<u8>) {
+    parse_proof_json_generic::<Fp>(proof_json)
+}
+
+pub fn parse_pallas_proof_json(proof_json: &str) -> (Vec<u8>, Vec<u8>) {
+    parse_proof_json_generic::<Fq>(proof_json)
 }
