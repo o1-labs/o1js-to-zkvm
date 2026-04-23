@@ -430,6 +430,149 @@ pub fn derive_plonk<F: PrimeField>(input: DerivePlonkInput<'_, F>) -> DerivedPlo
     }
 }
 
+// ---- ft_eval0 ------------------------------------------------------------
+
+/// Evaluate the linearization polynomial's constant term at `zeta` via
+/// kimchi's Polish-token interpreter.
+///
+/// The token stream comes from `kimchi::linearization::expr_linearization`;
+/// the caller supplies proof evaluations, Berkeley challenges, domain
+/// constants, and the domain itself. Thin wrapper over
+/// [`kimchi::circuits::expr::PolishToken::evaluate`] with the standard
+/// Berkeley instantiation.
+pub fn evaluate_linearization_constant_term<F: ark_ff::FftField>(
+    tokens: &[kimchi::circuits::expr::PolishToken<
+        F,
+        kimchi::circuits::berkeley_columns::Column,
+        kimchi::circuits::berkeley_columns::BerkeleyChallengeTerm,
+    >],
+    domain: ark_poly::Radix2EvaluationDomain<F>,
+    zeta: F,
+    evals: &kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<F>>,
+    constants: &kimchi::circuits::expr::Constants<F>,
+    challenges: &kimchi::circuits::berkeley_columns::BerkeleyChallenges<F>,
+) -> Result<F, kimchi::circuits::expr::ExprError<kimchi::circuits::berkeley_columns::Column>> {
+    kimchi::circuits::expr::PolishToken::evaluate(
+        tokens, domain, zeta, evals, constants, challenges,
+    )
+}
+
+/// Input to [`ft_eval0`].
+pub struct FtEval0Input<'a, F: ark_ff::FftField> {
+    /// Raw 128-bit plonk challenges from the statement.
+    pub plonk_minimal: &'a crate::statement::PlonkMinimal,
+    /// ProofEvaluations carried by the wrap proof's `prev_evals` — the
+    /// step proof's polynomial evaluations at `(zeta, zeta·omega)`.
+    pub evaluations: &'a kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<F>>,
+    /// Chunked evaluations of the public-input polynomial at zeta;
+    /// folded via [`actual_evaluation`].
+    pub public_input_chunks: &'a [F],
+    /// Permutation shift constants (7 values).
+    pub shifts: [F; 7],
+    /// Domain generator ω.
+    pub generator: F,
+    /// log2 of the domain size.
+    pub domain_log2: u32,
+    /// zk-row count (standard kimchi: 3).
+    pub zk_rows: u32,
+    /// log2 of the SRS length.
+    pub srs_length_log2: u32,
+    /// Curve endo coefficient for `F`.
+    pub endo: F,
+    /// Linearization-polynomial constant-term token stream, from
+    /// `kimchi::linearization::expr_linearization`.
+    pub linearization_constant_term: &'a [kimchi::circuits::expr::PolishToken<
+        F,
+        kimchi::circuits::berkeley_columns::Column,
+        kimchi::circuits::berkeley_columns::BerkeleyChallengeTerm,
+    >],
+    /// Plonk domain for token-stream evaluation.
+    pub domain: ark_poly::Radix2EvaluationDomain<F>,
+    /// MDS matrix for the Poseidon gate's constant-term evaluation.
+    pub mds: &'static [[F; 3]; 3],
+}
+
+/// Port of OCaml `Plonk_checks.ft_eval0` (plonk_checks.ml:350-400)
+/// / PS `Prove/Pure/Common.ftEval0`.
+///
+/// Returns `perm_contribution - p_eval0_folded - constant_term`, where:
+/// - `perm_contribution` mirrors [`perm_contribution`] on the witness /
+///   sigma / z-polynomial evaluations pulled out of `evaluations`.
+/// - `p_eval0_folded = actual_evaluation(srs_length_log2, zeta, public_input_chunks)`.
+/// - `constant_term` is the linearization polynomial's constant term at
+///   zeta, via [`evaluate_linearization_constant_term`].
+pub fn ft_eval0<F: ark_ff::FftField + PrimeField>(
+    input: FtEval0Input<'_, F>,
+) -> Result<F, kimchi::circuits::expr::ExprError<kimchi::circuits::berkeley_columns::Column>> {
+    let expanded = expand_plonk_minimal(input.plonk_minimal, &input.endo);
+
+    let omega_inv = F::one() / input.generator;
+    let omega_to_minus_zk_rows = omega_inv.pow([u64::from(input.zk_rows)]);
+    let omega_to_minus_zk_plus_1 = omega_inv.pow([u64::from(input.zk_rows - 1)]);
+    let zk_polynomial = (expanded.zeta - omega_inv)
+        * (expanded.zeta - omega_to_minus_zk_plus_1)
+        * (expanded.zeta - omega_to_minus_zk_rows);
+    let zeta_to_n_minus_1 = expanded.zeta.pow([1u64 << input.domain_log2]) - F::one();
+
+    let p_eval0_folded = actual_evaluation(
+        input.srs_length_log2,
+        expanded.zeta,
+        input.public_input_chunks,
+    );
+
+    // First 7 witness + 6 sigma evaluations at zeta feed the permutation
+    // contribution. z-poly values at zeta and zeta·omega likewise.
+    let mut w = [F::zero(); 7];
+    for (i, slot) in w.iter_mut().enumerate() {
+        *slot = input.evaluations.w[i].zeta;
+    }
+    let mut sigma = [F::zero(); 6];
+    for (i, slot) in sigma.iter_mut().enumerate() {
+        *slot = input.evaluations.s[i].zeta;
+    }
+    let perm = perm_contribution(&PermutationInput {
+        w,
+        sigma,
+        z_zeta: input.evaluations.z.zeta,
+        z_omega_times_zeta: input.evaluations.z.zeta_omega,
+        shifts: input.shifts,
+        alpha: expanded.alpha,
+        beta: expanded.beta,
+        gamma: expanded.gamma,
+        zk_polynomial,
+        zeta_to_n_minus_1,
+        omega_to_minus_zk_rows,
+        zeta: expanded.zeta,
+    });
+
+    let constants = kimchi::circuits::expr::Constants {
+        endo_coefficient: input.endo,
+        mds: input.mds,
+        zk_rows: u64::from(input.zk_rows),
+    };
+    let challenges = kimchi::circuits::berkeley_columns::BerkeleyChallenges {
+        alpha: expanded.alpha,
+        beta: expanded.beta,
+        gamma: expanded.gamma,
+        joint_combiner: input
+            .plonk_minimal
+            .joint_combiner
+            .as_ref()
+            .map(|sc| endo_expand_scalar(sc, &input.endo))
+            .unwrap_or_else(F::zero),
+    };
+    let constant_term = evaluate_linearization_constant_term(
+        input.linearization_constant_term,
+        input.domain,
+        expanded.zeta,
+        input.evaluations,
+        &constants,
+        &challenges,
+    )?;
+
+    Ok(perm - p_eval0_folded - constant_term)
+}
+
 // ---- tests ---------------------------------------------------------------
 
 #[cfg(test)]
