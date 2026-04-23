@@ -189,6 +189,160 @@ pub fn perm_scalar<F: PrimeField>(input: &PermutationInput<F>) -> F {
     -product
 }
 
+/// Port of PS `Pickles.PlonkChecks.Permutation.permContribution`
+/// / OCaml `Plonk_checks.ft_eval0` permutation block.
+///
+/// Returns `term1 - term2 + boundary`:
+/// - `term1 = (w_6 + gamma) · z(zeta·omega) · alpha^21 · zk_poly
+///     · ∏_{i=0}^{5} (beta · sigma_i + w_i + gamma)`
+/// - `term2 = alpha^21 · zk_poly · z(zeta)
+///     · ∏_{i=0}^{6} (gamma + beta · zeta · shift_i + w_i)`
+/// - `boundary = (zeta^n - 1) · (1 - z(zeta)) ·
+///     (alpha^22 · (zeta - omega^{-zk_rows}) + alpha^23 · (zeta - 1))
+///     / ((zeta - omega^{-zk_rows}) · (zeta - 1))`
+///
+/// Uses division so the caller must ensure the denominator is nonzero
+/// (both `zeta - omega^{-zk_rows}` and `zeta - 1` are expected non-zero
+/// when evaluating the plonk protocol away from zero-knowledge rows).
+pub fn perm_contribution<F: PrimeField>(input: &PermutationInput<F>) -> F {
+    let alpha_pow_21 = input.alpha.pow([PERM_ALPHA_0]);
+    let alpha_pow_22 = alpha_pow_21 * input.alpha;
+    let alpha_pow_23 = alpha_pow_22 * input.alpha;
+
+    // term1
+    let w6 = input.w[6];
+    let term1_init =
+        (w6 + input.gamma) * input.z_omega_times_zeta * alpha_pow_21 * input.zk_polynomial;
+    let term1 = input
+        .w
+        .iter()
+        .take(6)
+        .zip(input.sigma.iter())
+        .fold(term1_init, |acc, (w_i, s_i)| {
+            (input.beta * s_i + w_i + input.gamma) * acc
+        });
+
+    // term2
+    let term2_init = alpha_pow_21 * input.zk_polynomial * input.z_zeta;
+    let term2 = input
+        .w
+        .iter()
+        .zip(input.shifts.iter())
+        .fold(term2_init, |acc, (w_i, s_i)| {
+            acc * (input.gamma + input.beta * input.zeta * s_i + w_i)
+        });
+
+    // boundary
+    let zeta_minus_omega = input.zeta - input.omega_to_minus_zk_rows;
+    let zeta_minus_1 = input.zeta - F::one();
+    let numerator = (input.zeta_to_n_minus_1 * alpha_pow_22 * zeta_minus_omega
+        + input.zeta_to_n_minus_1 * alpha_pow_23 * zeta_minus_1)
+        * (F::one() - input.z_zeta);
+    let denominator = zeta_minus_omega * zeta_minus_1;
+    let boundary = numerator / denominator;
+
+    term1 - term2 + boundary
+}
+
+// ---- combined_inner_product ---------------------------------------------
+
+/// A polynomial evaluation at the pair `(zeta, zeta·omega)`.
+/// OCaml `Plonk_types.PointEvaluations`, PS `Linearization.FFI.PointEval`.
+pub struct PointEval<F> {
+    pub zeta: F,
+    pub omega_times_zeta: F,
+}
+
+/// All polynomial evaluations the CIP batching combines. Shape matches PS
+/// `Pickles.PlonkChecks.AllEvals` and OCaml `Plonk_types.All_evals`. Row
+/// counts are kimchi's production configuration (15 witness, 15 coeff, 6
+/// sigma, 6 selector).
+pub struct AllEvals<F> {
+    /// ft-polynomial evaluation at `zeta·omega` (ft_eval0 is computed
+    /// separately by the verifier).
+    pub ft_eval1: F,
+    pub public_evals: PointEval<F>,
+    pub z_evals: PointEval<F>,
+    pub index_evals: [PointEval<F>; 6],
+    pub witness_evals: [PointEval<F>; 15],
+    pub coeff_evals: [PointEval<F>; 15],
+    pub sigma_evals: [PointEval<F>; 6],
+}
+
+/// Input to [`combined_inner_product`].
+pub struct CombinedInnerProductInput<'a, F> {
+    pub all_evals: &'a AllEvals<F>,
+    /// ft_eval0, computed externally by the verifier (pickles' per-proof
+    /// ft polynomial evaluation at zeta).
+    pub ft_eval0: F,
+    /// Previous proofs' bp-challenge vectors, already endo-expanded. Each
+    /// inner vector feeds one `b_poly` into the batch.
+    pub old_bulletproof_challenges: &'a [Vec<F>],
+    /// The pickles batching challenge `xi` (distinct from kimchi's `v`).
+    pub xi: F,
+    /// The pickles point-combining challenge `r` (distinct from kimchi's `u`).
+    pub r: F,
+    pub zeta: F,
+    pub zetaw: F,
+}
+
+/// Port of OCaml's pickles `combined_inner_product` helper
+/// (wrap.ml:22-62 for the step-field side, step.ml:464-496 for the
+/// wrap-field side), via PS `Prove/Pure/Common.combinedInnerProductBatch`.
+///
+/// Batches evaluations in the order pickles fixes:
+/// `b_polys (n), public_input, ft, z, index (6), witness (15),
+/// coefficient (15), sigma (6)`, folding through
+/// `result += scale · (eval.zeta + r · eval.omega_times_zeta)` with
+/// `scale *= xi` each step (starting `scale = 1`).
+pub fn combined_inner_product<F: PrimeField>(input: CombinedInnerProductInput<'_, F>) -> F {
+    let bp_point_evals = input
+        .old_bulletproof_challenges
+        .iter()
+        .map(|chals| PointEval {
+            zeta: b_poly(chals, input.zeta),
+            omega_times_zeta: b_poly(chals, input.zetaw),
+        });
+    let ft_eval = PointEval {
+        zeta: input.ft_eval0,
+        omega_times_zeta: input.all_evals.ft_eval1,
+    };
+    let tail = core::iter::once(PointEval {
+        zeta: input.all_evals.public_evals.zeta,
+        omega_times_zeta: input.all_evals.public_evals.omega_times_zeta,
+    })
+    .chain(core::iter::once(ft_eval))
+    .chain(core::iter::once(PointEval {
+        zeta: input.all_evals.z_evals.zeta,
+        omega_times_zeta: input.all_evals.z_evals.omega_times_zeta,
+    }))
+    .chain(input.all_evals.index_evals.iter().map(|p| PointEval {
+        zeta: p.zeta,
+        omega_times_zeta: p.omega_times_zeta,
+    }))
+    .chain(input.all_evals.witness_evals.iter().map(|p| PointEval {
+        zeta: p.zeta,
+        omega_times_zeta: p.omega_times_zeta,
+    }))
+    .chain(input.all_evals.coeff_evals.iter().map(|p| PointEval {
+        zeta: p.zeta,
+        omega_times_zeta: p.omega_times_zeta,
+    }))
+    .chain(input.all_evals.sigma_evals.iter().map(|p| PointEval {
+        zeta: p.zeta,
+        omega_times_zeta: p.omega_times_zeta,
+    }));
+
+    let (result, _) =
+        bp_point_evals
+            .chain(tail)
+            .fold((F::zero(), F::one()), |(result, scale), eval| {
+                let term = eval.zeta + input.r * eval.omega_times_zeta;
+                (result + scale * term, scale * input.xi)
+            });
+    result
+}
+
 /// Input to [`derive_plonk`].
 pub struct DerivePlonkInput<'a, F> {
     /// Raw 128-bit challenges as they appear in the statement.
@@ -281,7 +435,8 @@ pub fn derive_plonk<F: PrimeField>(input: DerivePlonkInput<'_, F>) -> DerivedPlo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ff::Zero;
+    use alloc::vec;
+    use ark_ff::{One, Zero};
     use mina_curves::pasta::Fp;
 
     use crate::statement::{BulletproofChallenge, Challenge, ScalarChallenge};
@@ -416,6 +571,134 @@ mod tests {
         assert_eq!(derived.beta.0, plonk_minimal.beta.0);
         assert_eq!(derived.gamma.0, plonk_minimal.gamma.0);
         assert_eq!(derived.zeta.inner.0, plonk_minimal.zeta.inner.0);
+    }
+
+    /// `perm_contribution` on synthetic inputs, computed by hand.
+    #[test]
+    fn perm_contribution_matches_hand_computation() {
+        // Pick values that make the denominator non-zero and keep the math
+        // tractable.
+        let alpha = Fp::from(2u64);
+        let beta = Fp::from(3u64);
+        let gamma = Fp::from(5u64);
+        let zeta = Fp::from(11u64);
+        let zk_polynomial = Fp::from(7u64);
+        let zeta_to_n_minus_1 = Fp::from(13u64);
+        let omega_to_minus_zk_rows = Fp::from(19u64);
+        let z_zeta = Fp::from(23u64);
+        let z_omega_times_zeta = Fp::from(29u64);
+        let w = [Fp::from(31u64); 7];
+        let sigma = [Fp::from(37u64); 6];
+        let shifts = [Fp::from(41u64); 7];
+
+        let input = PermutationInput {
+            w,
+            sigma,
+            z_zeta,
+            z_omega_times_zeta,
+            shifts,
+            alpha,
+            beta,
+            gamma,
+            zk_polynomial,
+            zeta_to_n_minus_1,
+            omega_to_minus_zk_rows,
+            zeta,
+        };
+
+        // Hand computation mirroring perm_contribution exactly.
+        let a21 = alpha.pow([PERM_ALPHA_0]);
+        let a22 = a21 * alpha;
+        let a23 = a22 * alpha;
+        let term1_init = (w[6] + gamma) * z_omega_times_zeta * a21 * zk_polynomial;
+        let f1 = beta * sigma[0] + w[0] + gamma;
+        let term1 = term1_init * f1.pow([6u64]);
+        let term2_init = a21 * zk_polynomial * z_zeta;
+        let f2 = gamma + beta * zeta * shifts[0] + w[0];
+        let term2 = term2_init * f2.pow([7u64]);
+        let zmomega = zeta - omega_to_minus_zk_rows;
+        let zm1 = zeta - Fp::one();
+        let numerator = (zeta_to_n_minus_1 * a22 * zmomega + zeta_to_n_minus_1 * a23 * zm1)
+            * (Fp::one() - z_zeta);
+        let denominator = zmomega * zm1;
+        let boundary = numerator / denominator;
+        let expected = term1 - term2 + boundary;
+
+        assert_eq!(perm_contribution(&input), expected);
+    }
+
+    /// Wiring test for `combined_inner_product`: confirms the batching
+    /// order + Horner fold match a hand computation on a minimal synthetic
+    /// case (single prev-proof bp challenge vector, zeros elsewhere).
+    #[test]
+    fn combined_inner_product_batches_in_pickles_order() {
+        let pe = |z, w| PointEval {
+            zeta: Fp::from(z as u64),
+            omega_times_zeta: Fp::from(w as u64),
+        };
+        let all_evals = AllEvals {
+            ft_eval1: Fp::from(100u64),
+            public_evals: pe(1, 2),
+            z_evals: pe(3, 4),
+            index_evals: [
+                pe(5, 6),
+                pe(7, 8),
+                pe(9, 10),
+                pe(11, 12),
+                pe(13, 14),
+                pe(15, 16),
+            ],
+            witness_evals: core::array::from_fn(|i| pe((17 + i) as u32, (100 + i) as u32)),
+            coeff_evals: core::array::from_fn(|i| pe((200 + i) as u32, (300 + i) as u32)),
+            sigma_evals: core::array::from_fn(|i| pe((400 + i) as u32, (500 + i) as u32)),
+        };
+        let old_bpc = vec![vec![Fp::from(1u64); 16]];
+        let xi = Fp::from(2u64);
+        let r = Fp::from(3u64);
+        let zeta = Fp::from(5u64);
+        let zetaw = Fp::from(7u64);
+        let ft_eval0 = Fp::from(99u64);
+
+        let got = combined_inner_product(CombinedInnerProductInput {
+            all_evals: &all_evals,
+            ft_eval0,
+            old_bulletproof_challenges: &old_bpc,
+            xi,
+            r,
+            zeta,
+            zetaw,
+        });
+
+        // Hand computation: fold in pickles order with term = e.zeta + r * e.omega_times_zeta
+        // scale starts at 1 and multiplies by xi each step.
+        let b_at_zeta = b_poly(&old_bpc[0], zeta);
+        let b_at_zetaw = b_poly(&old_bpc[0], zetaw);
+        let mut ordered: Vec<(Fp, Fp)> = vec![(b_at_zeta, b_at_zetaw)];
+        ordered.push((
+            all_evals.public_evals.zeta,
+            all_evals.public_evals.omega_times_zeta,
+        ));
+        ordered.push((ft_eval0, all_evals.ft_eval1));
+        ordered.push((all_evals.z_evals.zeta, all_evals.z_evals.omega_times_zeta));
+        for p in &all_evals.index_evals {
+            ordered.push((p.zeta, p.omega_times_zeta));
+        }
+        for p in &all_evals.witness_evals {
+            ordered.push((p.zeta, p.omega_times_zeta));
+        }
+        for p in &all_evals.coeff_evals {
+            ordered.push((p.zeta, p.omega_times_zeta));
+        }
+        for p in &all_evals.sigma_evals {
+            ordered.push((p.zeta, p.omega_times_zeta));
+        }
+        let (expected, _) = ordered
+            .iter()
+            .fold((Fp::zero(), Fp::one()), |(res, scale), (z, wz)| {
+                (res + scale * (*z + r * wz), scale * xi)
+            });
+
+        assert_eq!(got, expected);
     }
 
     /// Exercises the endo-expansion + `b_poly` plumbing end-to-end with
