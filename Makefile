@@ -4,6 +4,7 @@ CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 SIMPLE_CHAIN_WRAP_VI_FIXTURE := $(CURDIR)/fixtures/simple_chain_wrap_vi.bin
 SIMPLE_CHAIN_WRAP_SRS_FIXTURE := $(CURDIR)/fixtures/simple_chain_wrap_srs.bin
 SIMPLE_CHAIN_WRAP_PROOF_FIXTURE := $(CURDIR)/fixtures/simple_chain_wrap_proof.bin
+SIMPLE_CHAIN_PROOF_REPR_JSON_FIXTURE := $(CURDIR)/fixtures/simple_chain_proof_repr.json
 
 .DEFAULT_GOAL := help
 
@@ -42,7 +43,7 @@ rust-e2e-tests: ## Run the full Rust+SP1 end-to-end script
 lint-check: submodules ## Run all linters and formatters in check-only mode
 	npm run format:check
 	npm run lint
-	cargo fmt -p o1-verifier -p o1-verifier-lib -p o1-verifier-host -- --check
+	cargo fmt -p o1-verifier -p o1-verifier-lib -p o1-verifier-host -p o1-pickles-verifier -- --check
 	# Build the host first so the guest ELF exists for include_elf!
 	# (clippy skips build scripts, so we need to build separately)
 	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
@@ -51,13 +52,14 @@ lint-check: submodules ## Run all linters and formatters in check-only mode
 lint: submodules ## Run all linters and formatters with auto-fix
 	npm run format
 	npm run lint
-	cargo fmt -p o1-verifier -p o1-verifier-lib -p o1-verifier-host
+	cargo fmt -p o1-verifier -p o1-verifier-lib -p o1-verifier-host -p o1-pickles-verifier
 	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
 	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo clippy --all-targets --features std --fix --allow-dirty --allow-staged -- -D warnings
 
-simple-chain-fixtures: submodules ## Regenerate fixtures/simple_chain_wrap_{vi,srs,proof}.bin from the OCaml Simple_chain executable (requires dune; enter the mina nix dev shell first if needed)
+simple-chain-fixtures: submodules ## Regenerate fixtures/simple_chain_wrap_{vi,srs,proof}.bin and simple_chain_proof_repr.json from the OCaml Simple_chain executable (requires dune; enter the mina nix dev shell first if needed)
 	cd $(CURDIR)/mina && \
 		SIMPLE_CHAIN_WRAP_VI_OUT=$(SIMPLE_CHAIN_WRAP_VI_FIXTURE) \
 		SIMPLE_CHAIN_WRAP_SRS_OUT=$(SIMPLE_CHAIN_WRAP_SRS_FIXTURE) \
 		SIMPLE_CHAIN_WRAP_PROOF_OUT=$(SIMPLE_CHAIN_WRAP_PROOF_FIXTURE) \
+		SIMPLE_CHAIN_PROOF_REPR_JSON_OUT=$(SIMPLE_CHAIN_PROOF_REPR_JSON_FIXTURE) \
 		dune exec src/lib/crypto/pickles/simple_chain/simple_chain.exe

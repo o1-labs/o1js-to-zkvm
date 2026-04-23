@@ -2646,6 +2646,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
+name = "o1-pickles-verifier"
+version = "0.1.0"
+dependencies = [
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "groupmap",
+ "kimchi",
+ "mina-curves",
+ "mina-poseidon",
+ "o1-verifier-lib",
+ "poly-commitment",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "o1-utils"
 version = "0.4.1"
 dependencies = [
