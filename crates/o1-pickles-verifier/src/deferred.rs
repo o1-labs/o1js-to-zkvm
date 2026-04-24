@@ -246,34 +246,21 @@ pub fn perm_contribution<F: PrimeField>(input: &PermutationInput<F>) -> F {
 
 // ---- combined_inner_product ---------------------------------------------
 
-/// A polynomial evaluation at the pair `(zeta, zeta·omega)`.
-/// OCaml `Plonk_types.PointEvaluations`, PS `Linearization.FFI.PointEval`.
-pub struct PointEval<F> {
-    pub zeta: F,
-    pub omega_times_zeta: F,
-}
-
-/// All polynomial evaluations the CIP batching combines. Shape matches PS
-/// `Pickles.PlonkChecks.AllEvals` and OCaml `Plonk_types.All_evals`. Row
-/// counts are kimchi's production configuration (15 witness, 15 coeff, 6
-/// sigma, 6 selector).
-pub struct AllEvals<F> {
-    /// ft-polynomial evaluation at `zeta·omega` (ft_eval0 is computed
-    /// separately by the verifier).
-    pub ft_eval1: F,
-    pub public_evals: PointEval<F>,
-    pub z_evals: PointEval<F>,
-    pub index_evals: [PointEval<F>; 6],
-    pub witness_evals: [PointEval<F>; 15],
-    pub coeff_evals: [PointEval<F>; 15],
-    pub sigma_evals: [PointEval<F>; 6],
-}
-
 /// Input to [`combined_inner_product`].
 pub struct CombinedInnerProductInput<'a, F> {
-    pub all_evals: &'a AllEvals<F>,
-    /// ft_eval0, computed externally by the verifier (pickles' per-proof
-    /// ft polynomial evaluation at zeta).
+    /// The step proof's polynomial evaluations (pulled out of the wrap
+    /// proof's `prev_evals`). We reuse kimchi's own `ProofEvaluations`
+    /// shape instead of maintaining a parallel `AllEvals` type.
+    pub evaluations: &'a kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<F>>,
+    /// Public-input polynomial evaluations at `(zeta, zeta·omega)`. Pickles
+    /// computes these by Horner-folding the public-input chunks
+    /// (see [`actual_evaluation`]) rather than pulling from
+    /// `evaluations.public`, so we take them as a separate input.
+    pub public_evals: &'a kimchi::proof::PointEvaluations<F>,
+    /// ft-polynomial evaluation at `zeta·omega`, carried on the proof itself
+    /// (not in `ProofEvaluations`).
+    pub ft_eval1: F,
+    /// `ft_eval0`, computed externally by the verifier via [`ft_eval0`].
     pub ft_eval0: F,
     /// Previous proofs' bp-challenge vectors, already endo-expanded. Each
     /// inner vector feeds one `b_poly` into the batch.
@@ -293,53 +280,46 @@ pub struct CombinedInnerProductInput<'a, F> {
 /// Batches evaluations in the order pickles fixes:
 /// `b_polys (n), public_input, ft, z, index (6), witness (15),
 /// coefficient (15), sigma (6)`, folding through
-/// `result += scale · (eval.zeta + r · eval.omega_times_zeta)` with
+/// `result += scale · (eval.zeta + r · eval.zeta_omega)` with
 /// `scale *= xi` each step (starting `scale = 1`).
+///
+/// The six `index` selectors appear in pickles' fixed order:
+/// `generic, poseidon, complete_add, mul, emul, endomul_scalar`.
+/// Optional gate/lookup selectors are not included — Simple_chain (and
+/// pickles wrap circuits in general) don't use them.
 pub fn combined_inner_product<F: PrimeField>(input: CombinedInnerProductInput<'_, F>) -> F {
+    use kimchi::proof::PointEvaluations;
+
+    let pe = input.evaluations;
+    let selectors: [&PointEvaluations<F>; 6] = [
+        &pe.generic_selector,
+        &pe.poseidon_selector,
+        &pe.complete_add_selector,
+        &pe.mul_selector,
+        &pe.emul_selector,
+        &pe.endomul_scalar_selector,
+    ];
+
     let bp_point_evals = input
         .old_bulletproof_challenges
         .iter()
-        .map(|chals| PointEval {
-            zeta: b_poly(chals, input.zeta),
-            omega_times_zeta: b_poly(chals, input.zetaw),
-        });
-    let ft_eval = PointEval {
-        zeta: input.ft_eval0,
-        omega_times_zeta: input.all_evals.ft_eval1,
-    };
-    let tail = core::iter::once(PointEval {
-        zeta: input.all_evals.public_evals.zeta,
-        omega_times_zeta: input.all_evals.public_evals.omega_times_zeta,
-    })
-    .chain(core::iter::once(ft_eval))
-    .chain(core::iter::once(PointEval {
-        zeta: input.all_evals.z_evals.zeta,
-        omega_times_zeta: input.all_evals.z_evals.omega_times_zeta,
-    }))
-    .chain(input.all_evals.index_evals.iter().map(|p| PointEval {
-        zeta: p.zeta,
-        omega_times_zeta: p.omega_times_zeta,
-    }))
-    .chain(input.all_evals.witness_evals.iter().map(|p| PointEval {
-        zeta: p.zeta,
-        omega_times_zeta: p.omega_times_zeta,
-    }))
-    .chain(input.all_evals.coeff_evals.iter().map(|p| PointEval {
-        zeta: p.zeta,
-        omega_times_zeta: p.omega_times_zeta,
-    }))
-    .chain(input.all_evals.sigma_evals.iter().map(|p| PointEval {
-        zeta: p.zeta,
-        omega_times_zeta: p.omega_times_zeta,
-    }));
+        .map(|chals| (b_poly(chals, input.zeta), b_poly(chals, input.zetaw)));
 
-    let (result, _) =
-        bp_point_evals
-            .chain(tail)
-            .fold((F::zero(), F::one()), |(result, scale), eval| {
-                let term = eval.zeta + input.r * eval.omega_times_zeta;
-                (result + scale * term, scale * input.xi)
-            });
+    let rest = core::iter::once((input.public_evals.zeta, input.public_evals.zeta_omega))
+        .chain(core::iter::once((input.ft_eval0, input.ft_eval1)))
+        .chain(core::iter::once((pe.z.zeta, pe.z.zeta_omega)))
+        .chain(selectors.iter().map(|s| (s.zeta, s.zeta_omega)))
+        .chain(pe.w.iter().map(|w| (w.zeta, w.zeta_omega)))
+        .chain(pe.coefficients.iter().map(|c| (c.zeta, c.zeta_omega)))
+        .chain(pe.s.iter().map(|s| (s.zeta, s.zeta_omega)));
+
+    let (result, _) = bp_point_evals.chain(rest).fold(
+        (F::zero(), F::one()),
+        |(result, scale), (at_zeta, at_zetaw)| {
+            let term = at_zeta + input.r * at_zetaw;
+            (result + scale * term, scale * input.xi)
+        },
+    );
     result
 }
 
@@ -573,6 +553,260 @@ pub fn ft_eval0<F: ark_ff::FftField + PrimeField>(
     Ok(perm - p_eval0_folded - constant_term)
 }
 
+// ---- expand_deferred -----------------------------------------------------
+
+/// Sponge round count used by pasta curves in pickles.
+pub const FULL_ROUNDS: usize = 55;
+
+/// Alias for the kimchi-constants sponge params over field `F`.
+pub type SpongeParams<F> = mina_poseidon::poseidon::ArithmeticSpongeParams<F, FULL_ROUNDS>;
+
+type FrSpongeKimchi<F> = mina_poseidon::sponge::DefaultFrSponge<
+    F,
+    mina_poseidon::constants::PlonkSpongeConstantsKimchi,
+    FULL_ROUNDS,
+>;
+
+type ArithmeticSpongeKimchi<F> = mina_poseidon::poseidon::ArithmeticSponge<
+    F,
+    mina_poseidon::constants::PlonkSpongeConstantsKimchi,
+    FULL_ROUNDS,
+>;
+
+/// Input to [`expand_deferred`].
+///
+/// Splits into three groups mirroring the PS port
+/// (`Pickles.Prove.Pure.Verify.ExpandDeferredInput`):
+///
+/// 1. **Carried minimal statement fields** (`plonk_minimal`,
+///    `bulletproof_challenges`, `sponge_digest_before_evaluations`) — pulled
+///    verbatim from the wrap proof's `proof_state`.
+/// 2. **Previous-proof evaluations + challenges** (`evaluations`,
+///    `public_evals`, `ft_eval1`, `public_input_chunks`,
+///    `old_bulletproof_challenges`) — the inner step proof's data, carried
+///    by the wrap proof's `prev_evals`.
+/// 3. **Static step-domain / SRS metadata** (`shifts`, `generator`,
+///    `domain_log2`, `zk_rows`, `srs_length_log2`, `endo`,
+///    `linearization_constant_term`, `domain`, `mds`, `sponge_params`) —
+///    verifier constants, read from the step verifier index.
+pub struct ExpandDeferredInput<'a, F: ark_ff::FftField + PrimeField> {
+    pub plonk_minimal: &'a crate::statement::PlonkMinimal,
+    pub bulletproof_challenges: &'a [BulletproofChallenge],
+    pub sponge_digest_before_evaluations: F,
+
+    pub evaluations: &'a kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<F>>,
+    pub public_evals: &'a kimchi::proof::PointEvaluations<F>,
+    pub ft_eval1: F,
+    pub public_input_chunks: &'a [F],
+    /// Already endo-expanded (step-field), one vector per previous proof.
+    pub old_bulletproof_challenges: &'a [Vec<F>],
+
+    pub shifts: [F; 7],
+    pub generator: F,
+    pub domain_log2: u32,
+    pub zk_rows: u32,
+    pub srs_length_log2: u32,
+    pub endo: F,
+
+    pub linearization_constant_term: &'a [kimchi::circuits::expr::PolishToken<
+        F,
+        kimchi::circuits::berkeley_columns::Column,
+        kimchi::circuits::berkeley_columns::BerkeleyChallengeTerm,
+    >],
+    pub domain: ark_poly::Radix2EvaluationDomain<F>,
+    pub mds: &'static [[F; 3]; 3],
+
+    pub sponge_params: &'static SpongeParams<F>,
+}
+
+/// Output of [`expand_deferred`] — the set of derived scalars the wrap
+/// statement commits to, plus the newly sampled challenges and auxiliary
+/// values `run_checks` asserts against the carried claims.
+pub struct ExpandedDeferred<F> {
+    pub plonk: DerivedPlonk<F>,
+    pub combined_inner_product: F,
+    /// Raw 128-bit form of the sampled batching challenge `xi`, carried
+    /// through `expand_deferred` to match the wrap statement's shape.
+    pub xi_raw: crate::statement::ScalarChallenge,
+    /// Endo-expanded `xi` used in CIP batching.
+    pub xi_field: F,
+    /// Endo-expanded `r` (the pickles point-combining challenge).
+    pub r_field: F,
+    /// Endo-expanded `zeta` (from `plonk_minimal.zeta`).
+    pub zeta_field: F,
+    /// `zeta * generator` — the second evaluation point.
+    pub zetaw: F,
+    /// `ft_eval0` computed via [`ft_eval0`].
+    pub ft_eval0: F,
+    /// `b = b_poly(new_bp_chals, zeta) + r * b_poly(new_bp_chals, zetaw)`.
+    pub b: F,
+    /// Endo-expanded bp challenges for the current proof.
+    pub new_bulletproof_challenges: Vec<F>,
+}
+
+fn scalar_challenge_to_limbs<F: PrimeField>(c: &PoseidonScalarChallenge<F>) -> [u64; 2] {
+    let bigint = c.inner().into_bigint();
+    let limbs = bigint.as_ref();
+    [limbs[0], limbs[1]]
+}
+
+/// Sub-sponge that digests all expanded previous-proof bp challenges into
+/// one field element. Mirrors OCaml `wrap_deferred_values.ml:128-137` — a
+/// fresh kimchi sponge absorbs every challenge (outer × inner) then
+/// squeezes one element.
+fn challenges_digest<F: PrimeField>(
+    old_bulletproof_challenges: &[Vec<F>],
+    params: &'static SpongeParams<F>,
+) -> F {
+    use mina_poseidon::poseidon::Sponge;
+    let mut s = <ArithmeticSpongeKimchi<F> as Sponge<F, F, FULL_ROUNDS>>::new(params);
+    for inner in old_bulletproof_challenges {
+        s.absorb(inner);
+    }
+    s.squeeze()
+}
+
+/// Port of OCaml `Wrap_deferred_values.expand_deferred`
+/// (`mina/src/lib/crypto/pickles/wrap_deferred_values.ml:17-193`), via PS
+/// `Pickles.Prove.Pure.Verify.expandDeferredForVerify`.
+///
+/// Replays the Fiat–Shamir sponge from the carried
+/// `sponge_digest_before_evaluations` checkpoint to recover `xi` and `r`,
+/// then composes [`derive_plonk`], [`ft_eval0`], [`combined_inner_product`],
+/// and [`compute_bp_chals_and_b`] to produce the full
+/// [`ExpandedDeferred`] that `run_checks` will compare against the
+/// statement's claimed values.
+pub fn expand_deferred<F: ark_ff::FftField + PrimeField>(
+    input: ExpandDeferredInput<'_, F>,
+) -> Result<
+    ExpandedDeferred<F>,
+    kimchi::circuits::expr::ExprError<kimchi::circuits::berkeley_columns::Column>,
+> {
+    use kimchi::plonk_sponge::FrSponge as _;
+
+    // 1. Endo-expand zeta and derive zetaw.
+    let zeta_field = endo_expand_scalar(&input.plonk_minimal.zeta, &input.endo);
+    let zetaw = zeta_field * input.generator;
+
+    // 2. Sub-sponge: digest previous bp challenges.
+    let prev_chals_digest =
+        challenges_digest(input.old_bulletproof_challenges, input.sponge_params);
+
+    // 3. Main sponge replay to sample xi and r.
+    let mut fr_sponge = FrSpongeKimchi::<F>::from(input.sponge_params);
+    fr_sponge.absorb(&input.sponge_digest_before_evaluations);
+    fr_sponge.absorb(&prev_chals_digest);
+    fr_sponge.absorb(&input.ft_eval1);
+    fr_sponge.absorb(&input.public_evals.zeta);
+    fr_sponge.absorb(&input.public_evals.zeta_omega);
+
+    let pe = input.evaluations;
+    // Absorption order matches kimchi's `FrSponge::absorb_evaluations`
+    // (plonk_sponge.rs:55) and PS `absorbPointEval` loop: z, 6 selectors,
+    // 15 witness, 15 coefficients, 6 sigma. Each point: zeta then zeta_omega.
+    let ordered: [&kimchi::proof::PointEvaluations<F>; 7] = [
+        &pe.z,
+        &pe.generic_selector,
+        &pe.poseidon_selector,
+        &pe.complete_add_selector,
+        &pe.mul_selector,
+        &pe.emul_selector,
+        &pe.endomul_scalar_selector,
+    ];
+    for p in ordered
+        .iter()
+        .copied()
+        .chain(pe.w.iter())
+        .chain(pe.coefficients.iter())
+        .chain(pe.s.iter())
+    {
+        fr_sponge.absorb(&p.zeta);
+        fr_sponge.absorb(&p.zeta_omega);
+    }
+
+    let xi_sc = fr_sponge.challenge();
+    let r_sc = fr_sponge.challenge();
+    let xi_limbs = scalar_challenge_to_limbs(&xi_sc);
+    let xi_field = xi_sc.to_field(&input.endo);
+    let r_field = r_sc.to_field(&input.endo);
+
+    // 4. derive_plonk.
+    let mut w_arr = [F::zero(); 7];
+    for (i, slot) in w_arr.iter_mut().enumerate() {
+        *slot = pe.w[i].zeta;
+    }
+    let mut sigma_arr = [F::zero(); 6];
+    for (i, slot) in sigma_arr.iter_mut().enumerate() {
+        *slot = pe.s[i].zeta;
+    }
+    let plonk = derive_plonk(DerivePlonkInput {
+        plonk_minimal: input.plonk_minimal,
+        w: w_arr,
+        sigma: sigma_arr,
+        z_zeta: pe.z.zeta,
+        z_omega_times_zeta: pe.z.zeta_omega,
+        shifts: input.shifts,
+        generator: input.generator,
+        domain_log2: input.domain_log2,
+        zk_rows: input.zk_rows,
+        srs_length_log2: input.srs_length_log2,
+        endo: input.endo,
+    });
+
+    // 5. ft_eval0.
+    let ft_eval0_val = ft_eval0(FtEval0Input {
+        plonk_minimal: input.plonk_minimal,
+        evaluations: input.evaluations,
+        public_input_chunks: input.public_input_chunks,
+        shifts: input.shifts,
+        generator: input.generator,
+        domain_log2: input.domain_log2,
+        zk_rows: input.zk_rows,
+        srs_length_log2: input.srs_length_log2,
+        endo: input.endo,
+        linearization_constant_term: input.linearization_constant_term,
+        domain: input.domain,
+        mds: input.mds,
+    })?;
+
+    // 6. combined_inner_product.
+    let cip = combined_inner_product(CombinedInnerProductInput {
+        evaluations: input.evaluations,
+        public_evals: input.public_evals,
+        ft_eval1: input.ft_eval1,
+        ft_eval0: ft_eval0_val,
+        old_bulletproof_challenges: input.old_bulletproof_challenges,
+        xi: xi_field,
+        r: r_field,
+        zeta: zeta_field,
+        zetaw,
+    });
+
+    // 7. Current proof's bulletproof challenges + b.
+    let bp = compute_bp_chals_and_b(
+        input.bulletproof_challenges,
+        &input.endo,
+        zeta_field,
+        zetaw,
+        r_field,
+    );
+
+    Ok(ExpandedDeferred {
+        plonk,
+        combined_inner_product: cip,
+        xi_raw: crate::statement::ScalarChallenge {
+            inner: Challenge(xi_limbs),
+        },
+        xi_field,
+        r_field,
+        zeta_field,
+        zetaw,
+        ft_eval0: ft_eval0_val,
+        b: bp.b,
+        new_bulletproof_challenges: bp.chals,
+    })
+}
+
 // ---- tests ---------------------------------------------------------------
 
 #[cfg(test)]
@@ -772,29 +1006,49 @@ mod tests {
 
     /// Wiring test for `combined_inner_product`: confirms the batching
     /// order + Horner fold match a hand computation on a minimal synthetic
-    /// case (single prev-proof bp challenge vector, zeros elsewhere).
+    /// case (single prev-proof bp challenge vector).
     #[test]
     fn combined_inner_product_batches_in_pickles_order() {
-        let pe = |z, w| PointEval {
+        use kimchi::proof::{PointEvaluations, ProofEvaluations};
+
+        let pe = |z: u32, w: u32| PointEvaluations {
             zeta: Fp::from(z as u64),
-            omega_times_zeta: Fp::from(w as u64),
+            zeta_omega: Fp::from(w as u64),
         };
-        let all_evals = AllEvals {
-            ft_eval1: Fp::from(100u64),
-            public_evals: pe(1, 2),
-            z_evals: pe(3, 4),
-            index_evals: [
-                pe(5, 6),
-                pe(7, 8),
-                pe(9, 10),
-                pe(11, 12),
-                pe(13, 14),
-                pe(15, 16),
-            ],
-            witness_evals: core::array::from_fn(|i| pe((17 + i) as u32, (100 + i) as u32)),
-            coeff_evals: core::array::from_fn(|i| pe((200 + i) as u32, (300 + i) as u32)),
-            sigma_evals: core::array::from_fn(|i| pe((400 + i) as u32, (500 + i) as u32)),
+
+        // Build a ProofEvaluations with distinct synthetic values in each
+        // slot so an ordering bug would show up as a mismatch.
+        let evaluations = ProofEvaluations::<PointEvaluations<Fp>> {
+            public: Some(pe(1, 2)),
+            z: pe(3, 4),
+            generic_selector: pe(5, 6),
+            poseidon_selector: pe(7, 8),
+            complete_add_selector: pe(9, 10),
+            mul_selector: pe(11, 12),
+            emul_selector: pe(13, 14),
+            endomul_scalar_selector: pe(15, 16),
+            w: core::array::from_fn(|i| pe((17 + i) as u32, (100 + i) as u32)),
+            coefficients: core::array::from_fn(|i| pe((200 + i) as u32, (300 + i) as u32)),
+            s: core::array::from_fn(|i| pe((400 + i) as u32, (500 + i) as u32)),
+            range_check0_selector: None,
+            range_check1_selector: None,
+            foreign_field_add_selector: None,
+            foreign_field_mul_selector: None,
+            xor_selector: None,
+            rot_selector: None,
+            lookup_aggregation: None,
+            lookup_table: None,
+            lookup_sorted: core::array::from_fn(|_| None),
+            runtime_lookup_table: None,
+            runtime_lookup_table_selector: None,
+            xor_lookup_selector: None,
+            lookup_gate_lookup_selector: None,
+            range_check_lookup_selector: None,
+            foreign_field_mul_lookup_selector: None,
         };
+        let public_evals = pe(1, 2);
+        let ft_eval1 = Fp::from(100u64);
+
         let old_bpc = vec![vec![Fp::from(1u64); 16]];
         let xi = Fp::from(2u64);
         let r = Fp::from(3u64);
@@ -803,7 +1057,9 @@ mod tests {
         let ft_eval0 = Fp::from(99u64);
 
         let got = combined_inner_product(CombinedInnerProductInput {
-            all_evals: &all_evals,
+            evaluations: &evaluations,
+            public_evals: &public_evals,
+            ft_eval1,
             ft_eval0,
             old_bulletproof_challenges: &old_bpc,
             xi,
@@ -812,28 +1068,33 @@ mod tests {
             zetaw,
         });
 
-        // Hand computation: fold in pickles order with term = e.zeta + r * e.omega_times_zeta
+        // Hand computation: fold in pickles order with
+        //   term = e.zeta + r * e.zeta_omega
         // scale starts at 1 and multiplies by xi each step.
         let b_at_zeta = b_poly(&old_bpc[0], zeta);
         let b_at_zetaw = b_poly(&old_bpc[0], zetaw);
         let mut ordered: Vec<(Fp, Fp)> = vec![(b_at_zeta, b_at_zetaw)];
-        ordered.push((
-            all_evals.public_evals.zeta,
-            all_evals.public_evals.omega_times_zeta,
-        ));
-        ordered.push((ft_eval0, all_evals.ft_eval1));
-        ordered.push((all_evals.z_evals.zeta, all_evals.z_evals.omega_times_zeta));
-        for p in &all_evals.index_evals {
-            ordered.push((p.zeta, p.omega_times_zeta));
+        ordered.push((public_evals.zeta, public_evals.zeta_omega));
+        ordered.push((ft_eval0, ft_eval1));
+        ordered.push((evaluations.z.zeta, evaluations.z.zeta_omega));
+        for s in [
+            &evaluations.generic_selector,
+            &evaluations.poseidon_selector,
+            &evaluations.complete_add_selector,
+            &evaluations.mul_selector,
+            &evaluations.emul_selector,
+            &evaluations.endomul_scalar_selector,
+        ] {
+            ordered.push((s.zeta, s.zeta_omega));
         }
-        for p in &all_evals.witness_evals {
-            ordered.push((p.zeta, p.omega_times_zeta));
+        for w in &evaluations.w {
+            ordered.push((w.zeta, w.zeta_omega));
         }
-        for p in &all_evals.coeff_evals {
-            ordered.push((p.zeta, p.omega_times_zeta));
+        for c in &evaluations.coefficients {
+            ordered.push((c.zeta, c.zeta_omega));
         }
-        for p in &all_evals.sigma_evals {
-            ordered.push((p.zeta, p.omega_times_zeta));
+        for s in &evaluations.s {
+            ordered.push((s.zeta, s.zeta_omega));
         }
         let (expected, _) = ordered
             .iter()

@@ -20,14 +20,13 @@ use serde::de::{self, Deserializer};
 use serde::Deserialize;
 
 /// The top-level JSON dumped by `Pickles.Proof.Make(Nat.N1).to_yojson_full`,
-/// with the `app_state` splice applied on the OCaml side. We only consume
-/// `statement` here; `prev_evals` and `proof` are parsed opaquely to keep
-/// this module focused.
+/// with the `app_state` splice applied on the OCaml side. We consume
+/// `statement` and `prev_evals`; `proof` (the inner wrap kimchi proof) is
+/// still parsed opaquely until Stage 3 needs it.
 #[derive(Debug, Deserialize)]
 pub struct ProofReprWire {
     pub statement: StatementWire,
-    #[serde(default, skip)]
-    pub prev_evals: (),
+    pub prev_evals: PrevEvalsWire,
     #[serde(default, skip)]
     pub proof: (),
 }
@@ -164,4 +163,81 @@ pub struct MessagesForNextStepProofWire {
     pub challenge_polynomial_commitments: Vec<CurvePointWire>,
     /// Outer length = `most_recent_width`; inner = `Step_bp_vec` = 16 entries.
     pub old_bulletproof_challenges: Vec<Vec<BulletproofChallengeWire>>,
+}
+
+// ---- prev_evals -----------------------------------------------------------
+//
+// OCaml: `Plonk_types.All_evals.Stable.V1.t` from
+// `pickles_types/plonk_types.ml`. After `Proof.Make.to_repr` collapses the
+// public-input arrays to single values (proof.ml:260-261), each "point
+// evaluation" becomes a 2-tuple `(at_zeta, at_zetaw)`:
+//
+//   * `public_input : ('f * 'f)`           → [String; 2]   (hex strings, 1 F each)
+//   * every polynomial in `evals`: chunks  → [Vec<String>; 2]  (1 chunk/point for
+//                                             Simple_chain, so inner len = 1)
+//
+// Optional gates / lookups are emitted as JSON `null` when absent.
+
+/// `{ evals; ft_eval1 }` — the step proof's polynomial evaluations carried
+/// by the wrap proof.
+#[derive(Debug, Deserialize)]
+pub struct PrevEvalsWire {
+    pub evals: EvalsWithPublicInputWire,
+    pub ft_eval1: String,
+}
+
+/// `{ public_input; evals }` where `public_input` is the already-combined
+/// `(zeta, zeta_omega)` pair (OCaml collapses the chunk arrays in
+/// `Proof.Make.to_repr`) and `evals` is the kimchi-shape
+/// `ProofEvaluations<PointEvaluations<chunk_array>>`.
+#[derive(Debug, Deserialize)]
+pub struct EvalsWithPublicInputWire {
+    pub public_input: [String; 2],
+    pub evals: KimchiEvalsWire,
+}
+
+/// One polynomial's `(zeta, zeta_omega)` evaluations — each side is an
+/// array of chunk evaluations. Simple_chain is single-chunk, so the inner
+/// `Vec<String>` always has length 1; keeping it variable-length tracks
+/// the OCaml shape exactly.
+pub type PointEvalsChunkedWire = [Vec<String>; 2];
+
+/// Direct mirror of kimchi's `ProofEvaluations` shape as pickles emits it.
+/// Field order and names match `proof-systems/kimchi/src/proof.rs:50`.
+#[derive(Debug, Deserialize)]
+pub struct KimchiEvalsWire {
+    /// 15 witness columns.
+    pub w: Vec<PointEvalsChunkedWire>,
+    /// 15 coefficient columns.
+    pub coefficients: Vec<PointEvalsChunkedWire>,
+    /// Permutation polynomial.
+    pub z: PointEvalsChunkedWire,
+    /// 6 sigma polynomials (PERMUTS - 1).
+    pub s: Vec<PointEvalsChunkedWire>,
+    pub generic_selector: PointEvalsChunkedWire,
+    pub poseidon_selector: PointEvalsChunkedWire,
+    pub complete_add_selector: PointEvalsChunkedWire,
+    pub mul_selector: PointEvalsChunkedWire,
+    pub emul_selector: PointEvalsChunkedWire,
+    pub endomul_scalar_selector: PointEvalsChunkedWire,
+
+    // Optional gates
+    pub range_check0_selector: Option<PointEvalsChunkedWire>,
+    pub range_check1_selector: Option<PointEvalsChunkedWire>,
+    pub foreign_field_add_selector: Option<PointEvalsChunkedWire>,
+    pub foreign_field_mul_selector: Option<PointEvalsChunkedWire>,
+    pub xor_selector: Option<PointEvalsChunkedWire>,
+    pub rot_selector: Option<PointEvalsChunkedWire>,
+
+    // Optional lookup-related
+    pub lookup_aggregation: Option<PointEvalsChunkedWire>,
+    pub lookup_table: Option<PointEvalsChunkedWire>,
+    /// Length 5, each `Option`.
+    pub lookup_sorted: Vec<Option<PointEvalsChunkedWire>>,
+    pub runtime_lookup_table: Option<PointEvalsChunkedWire>,
+    pub runtime_lookup_table_selector: Option<PointEvalsChunkedWire>,
+    pub xor_lookup_selector: Option<PointEvalsChunkedWire>,
+    pub lookup_gate_lookup_selector: Option<PointEvalsChunkedWire>,
+    pub range_check_lookup_selector: Option<PointEvalsChunkedWire>,
+    pub foreign_field_mul_lookup_selector: Option<PointEvalsChunkedWire>,
 }

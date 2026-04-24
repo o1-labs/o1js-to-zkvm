@@ -23,8 +23,9 @@ use crate::statement::{
 };
 use crate::wire::{
     BranchDataWire, BulletproofChallengeWire, CurvePointWire, DeferredValuesWire, FeatureFlagsWire,
-    MessagesForNextStepProofWire, MessagesForNextWrapProofWire, PlonkMinimalWire, ProofStateWire,
-    ProofsVerifiedTag, ScalarChallengeWire, StatementWire,
+    KimchiEvalsWire, MessagesForNextStepProofWire, MessagesForNextWrapProofWire, PlonkMinimalWire,
+    PointEvalsChunkedWire, PrevEvalsWire, ProofStateWire, ProofsVerifiedTag, ScalarChallengeWire,
+    StatementWire,
 };
 
 #[derive(Debug)]
@@ -241,5 +242,198 @@ fn exact_length_array<T, const N: usize>(
         field,
         expected: N,
         got,
+    })
+}
+
+// ---- prev_evals ----------------------------------------------------------
+
+/// Parsed form of `prev_evals` — the step proof's polynomial evaluations
+/// carried alongside the wrap statement. These are the inputs
+/// [`crate::deferred::expand_deferred`] consumes alongside the minimal
+/// statement.
+pub struct ParsedPrevEvals {
+    /// Kimchi-shape evaluations at `(zeta, zeta·omega)`, chunks already
+    /// collapsed (OCaml `Proof.Make.to_repr` kept only the first chunk).
+    pub evaluations: kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<Fp>>,
+    /// Public-input polynomial evaluation at `(zeta, zeta·omega)`.
+    pub public_evals: kimchi::proof::PointEvaluations<Fp>,
+    pub ft_eval1: Fp,
+}
+
+pub fn parse_prev_evals(w: PrevEvalsWire) -> Result<ParsedPrevEvals, ParseError> {
+    let ft_eval1 = parse_hex_field::<Fp>(&w.ft_eval1)?;
+    let public_evals = kimchi::proof::PointEvaluations {
+        zeta: parse_hex_field::<Fp>(&w.evals.public_input[0])?,
+        zeta_omega: parse_hex_field::<Fp>(&w.evals.public_input[1])?,
+    };
+    let evaluations = parse_kimchi_evals(w.evals.evals)?;
+    Ok(ParsedPrevEvals {
+        evaluations,
+        public_evals,
+        ft_eval1,
+    })
+}
+
+/// Collapse a chunked point-evaluation pair `[[zeta_chunks], [zetaw_chunks]]`
+/// into a single `PointEvaluations<F>`. Pickles' wire format is
+/// single-chunk for Simple_chain (`max_poly_size == domain_size`), so each
+/// inner `Vec<String>` must have length exactly 1.
+fn parse_point_evals_single_chunk(
+    field: &'static str,
+    w: &PointEvalsChunkedWire,
+) -> Result<kimchi::proof::PointEvaluations<Fp>, ParseError> {
+    let zeta_chunks = &w[0];
+    let zetaw_chunks = &w[1];
+    if zeta_chunks.len() != 1 {
+        return Err(ParseError::WrongLength {
+            field,
+            expected: 1,
+            got: zeta_chunks.len(),
+        });
+    }
+    if zetaw_chunks.len() != 1 {
+        return Err(ParseError::WrongLength {
+            field,
+            expected: 1,
+            got: zetaw_chunks.len(),
+        });
+    }
+    Ok(kimchi::proof::PointEvaluations {
+        zeta: parse_hex_field::<Fp>(&zeta_chunks[0])?,
+        zeta_omega: parse_hex_field::<Fp>(&zetaw_chunks[0])?,
+    })
+}
+
+fn parse_opt_point_evals(
+    field: &'static str,
+    w: Option<&PointEvalsChunkedWire>,
+) -> Result<Option<kimchi::proof::PointEvaluations<Fp>>, ParseError> {
+    match w {
+        None => Ok(None),
+        Some(p) => Ok(Some(parse_point_evals_single_chunk(field, p)?)),
+    }
+}
+
+fn parse_kimchi_evals(
+    w: KimchiEvalsWire,
+) -> Result<kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<Fp>>, ParseError> {
+    use kimchi::proof::{PointEvaluations, ProofEvaluations};
+
+    let parse_arr = |field: &'static str, xs: &[PointEvalsChunkedWire]| {
+        xs.iter()
+            .map(|p| parse_point_evals_single_chunk(field, p))
+            .collect::<Result<Vec<_>, _>>()
+    };
+
+    let w_evals: [PointEvaluations<Fp>; 15] = exact_length_array(
+        "prev_evals.evals.w",
+        parse_arr("prev_evals.evals.w[i]", &w.w)?.into_iter(),
+    )?;
+    let coefficients: [PointEvaluations<Fp>; 15] = exact_length_array(
+        "prev_evals.evals.coefficients",
+        parse_arr("prev_evals.evals.coefficients[i]", &w.coefficients)?.into_iter(),
+    )?;
+    let s: [PointEvaluations<Fp>; 6] = exact_length_array(
+        "prev_evals.evals.s",
+        parse_arr("prev_evals.evals.s[i]", &w.s)?.into_iter(),
+    )?;
+    let lookup_sorted: [Option<PointEvaluations<Fp>>; 5] = exact_length_array(
+        "prev_evals.evals.lookup_sorted",
+        w.lookup_sorted
+            .iter()
+            .map(|opt| parse_opt_point_evals("prev_evals.evals.lookup_sorted[i]", opt.as_ref()))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter(),
+    )?;
+
+    Ok(ProofEvaluations {
+        // `prev_evals` public-input lives separately (see `ParsedPrevEvals`),
+        // so we leave this None here.
+        public: None,
+        w: w_evals,
+        z: parse_point_evals_single_chunk("prev_evals.evals.z", &w.z)?,
+        s,
+        coefficients,
+        generic_selector: parse_point_evals_single_chunk(
+            "prev_evals.evals.generic_selector",
+            &w.generic_selector,
+        )?,
+        poseidon_selector: parse_point_evals_single_chunk(
+            "prev_evals.evals.poseidon_selector",
+            &w.poseidon_selector,
+        )?,
+        complete_add_selector: parse_point_evals_single_chunk(
+            "prev_evals.evals.complete_add_selector",
+            &w.complete_add_selector,
+        )?,
+        mul_selector: parse_point_evals_single_chunk(
+            "prev_evals.evals.mul_selector",
+            &w.mul_selector,
+        )?,
+        emul_selector: parse_point_evals_single_chunk(
+            "prev_evals.evals.emul_selector",
+            &w.emul_selector,
+        )?,
+        endomul_scalar_selector: parse_point_evals_single_chunk(
+            "prev_evals.evals.endomul_scalar_selector",
+            &w.endomul_scalar_selector,
+        )?,
+        range_check0_selector: parse_opt_point_evals(
+            "prev_evals.evals.range_check0_selector",
+            w.range_check0_selector.as_ref(),
+        )?,
+        range_check1_selector: parse_opt_point_evals(
+            "prev_evals.evals.range_check1_selector",
+            w.range_check1_selector.as_ref(),
+        )?,
+        foreign_field_add_selector: parse_opt_point_evals(
+            "prev_evals.evals.foreign_field_add_selector",
+            w.foreign_field_add_selector.as_ref(),
+        )?,
+        foreign_field_mul_selector: parse_opt_point_evals(
+            "prev_evals.evals.foreign_field_mul_selector",
+            w.foreign_field_mul_selector.as_ref(),
+        )?,
+        xor_selector: parse_opt_point_evals(
+            "prev_evals.evals.xor_selector",
+            w.xor_selector.as_ref(),
+        )?,
+        rot_selector: parse_opt_point_evals(
+            "prev_evals.evals.rot_selector",
+            w.rot_selector.as_ref(),
+        )?,
+        lookup_aggregation: parse_opt_point_evals(
+            "prev_evals.evals.lookup_aggregation",
+            w.lookup_aggregation.as_ref(),
+        )?,
+        lookup_table: parse_opt_point_evals(
+            "prev_evals.evals.lookup_table",
+            w.lookup_table.as_ref(),
+        )?,
+        lookup_sorted,
+        runtime_lookup_table: parse_opt_point_evals(
+            "prev_evals.evals.runtime_lookup_table",
+            w.runtime_lookup_table.as_ref(),
+        )?,
+        runtime_lookup_table_selector: parse_opt_point_evals(
+            "prev_evals.evals.runtime_lookup_table_selector",
+            w.runtime_lookup_table_selector.as_ref(),
+        )?,
+        xor_lookup_selector: parse_opt_point_evals(
+            "prev_evals.evals.xor_lookup_selector",
+            w.xor_lookup_selector.as_ref(),
+        )?,
+        lookup_gate_lookup_selector: parse_opt_point_evals(
+            "prev_evals.evals.lookup_gate_lookup_selector",
+            w.lookup_gate_lookup_selector.as_ref(),
+        )?,
+        range_check_lookup_selector: parse_opt_point_evals(
+            "prev_evals.evals.range_check_lookup_selector",
+            w.range_check_lookup_selector.as_ref(),
+        )?,
+        foreign_field_mul_lookup_selector: parse_opt_point_evals(
+            "prev_evals.evals.foreign_field_mul_lookup_selector",
+            w.foreign_field_mul_lookup_selector.as_ref(),
+        )?,
     })
 }
