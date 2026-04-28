@@ -28,3 +28,8 @@ make rust-e2e-tests
 
 Verifies the checked-in `simple_chain` wrap proofs (b0 and b1) inside
 the SP1 zkVM (mock mode).
+
+For a walkthrough of what data flows where (statement vs expanded
+statement vs packed statement, build-time vs runtime artifacts, why
+`expand_deferred` runs in the verifier even though the wrap circuit
+re-derives it internally), see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
