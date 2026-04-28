@@ -1,11 +1,11 @@
 use std::fs;
 
 use clap::{Parser, Subcommand};
-use o1_pickles_verifier::messages::compute_dummy_wrap_sg;
-use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_msgpack};
-use o1_pickles_verifier::verify::{
-    host_populate_prev_challenges, host_precompute, CommitOutput, GuestInput,
+use o1_pickles_verifier::kimchi_input::{
+    compute_dummy_wrap_sg, host_populate_prev_challenges, host_precompute,
 };
+use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_msgpack};
+use o1_pickles_verifier::verify::{CommitOutput, GuestInput};
 use o1_pickles_verifier::Pallas;
 use o1_verifier_lib::PallasProof;
 use poly_commitment::ipa::SRS;

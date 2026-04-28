@@ -1,19 +1,18 @@
-//! Endo-expands the wrap statement's bulletproof challenges, computes
+//! Endo-expand the wrap statement's bulletproof challenges, compute
 //! the step-side (Vesta) commitment to the challenge polynomial, and
-//! checks it matches `messages_for_next_wrap_proof.challenge_polynomial_commitment`.
-//! This is the scalar-field deferred work a recursive step circuit
-//! would normally handle — verified natively here.
+//! check it matches `messages_for_next_wrap_proof.challenge_polynomial_commitment`.
+//! Out-of-circuit verification of the scalar-field deferred work that
+//! a recursive step circuit would normally handle.
 
 #![cfg(feature = "std")]
 
 use o1_pickles_verifier::accumulator::accumulator_check;
-use o1_pickles_verifier::deferred::endo_expand_scalar;
-use o1_pickles_verifier::messages::STEP_IPA_ROUNDS;
 use o1_pickles_verifier::parse::parse_proof_repr_json;
-use o1_pickles_verifier::{Fp, Vesta};
-use poly_commitment::ipa::{endos, SRS};
+use o1_pickles_verifier::Vesta;
+use poly_commitment::ipa::SRS;
 
 const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b0.json");
+const STEP_IPA_ROUNDS: usize = 16;
 
 #[test]
 fn stage2_accumulator_matches() {
@@ -21,20 +20,12 @@ fn stage2_accumulator_matches() {
         .expect("parse_proof_repr_json")
         .statement;
 
-    let (_endo_q, endo_r) = endos::<Vesta>();
-    let chals: Vec<Fp> = stmt
-        .proof_state
-        .deferred_values
-        .bulletproof_challenges
-        .iter()
-        .map(|bc| endo_expand_scalar(&bc.prechallenge, &endo_r))
-        .collect();
-    assert_eq!(chals.len(), STEP_IPA_ROUNDS);
-
     let srs: SRS<Vesta> = SRS::create_parallel(1 << STEP_IPA_ROUNDS);
-    let claimed = stmt
-        .proof_state
-        .messages_for_next_wrap_proof
-        .challenge_polynomial_commitment;
-    assert!(accumulator_check(&chals, claimed, &srs));
+    assert!(accumulator_check(
+        &stmt.proof_state.deferred_values.bulletproof_challenges,
+        stmt.proof_state
+            .messages_for_next_wrap_proof
+            .challenge_polynomial_commitment,
+        &srs,
+    ));
 }

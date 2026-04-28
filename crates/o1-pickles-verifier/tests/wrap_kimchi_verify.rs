@@ -6,12 +6,11 @@
 
 #![cfg(feature = "std")]
 
-use o1_pickles_verifier::messages::{compute_dummy_wrap_sg, WrapVkCommitments};
-use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_json};
-use o1_pickles_verifier::verify::{
-    host_populate_prev_challenges, host_precompute, verify_wrap_proof_precomputed, GuestInput,
-    WrapVerifySetup,
+use o1_pickles_verifier::kimchi_input::{
+    compute_dummy_wrap_sg, host_populate_prev_challenges, host_precompute, WrapVkCommitments,
 };
+use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_json};
+use o1_pickles_verifier::verify::{verify_wrap_proof_precomputed, GuestInput, WrapVerifySetup};
 use o1_pickles_verifier::Pallas;
 use o1_verifier_lib::{load_pallas_verifier_index, PallasProof};
 use poly_commitment::ipa::SRS;

@@ -24,7 +24,7 @@ sp1_zkvm::entrypoint!(main);
 
 use ark_serialize::CanonicalDeserialize;
 
-use o1_pickles_verifier::messages::WrapVkCommitments;
+use o1_pickles_verifier::kimchi_input::WrapVkCommitments;
 use o1_pickles_verifier::verify::{
     verify_wrap_proof_precomputed, CommitOutput, GuestInput, WrapVerifySetup,
 };

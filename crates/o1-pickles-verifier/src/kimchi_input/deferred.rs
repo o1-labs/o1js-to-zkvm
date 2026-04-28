@@ -326,6 +326,7 @@ pub struct DerivePlonkInput<'a, F> {
 /// are carried through unchanged from the minimal input; the derived
 /// scalars (`perm`, `zeta_to_domain_size`, `zeta_to_srs_length`) are
 /// wrapped in [`ShiftedValue`] as pickles' `Shifted_value.Type1`.
+#[allow(dead_code)]
 pub struct DerivedPlonk<F> {
     pub alpha: crate::statement::ScalarChallenge,
     pub beta: Challenge,
@@ -602,6 +603,7 @@ pub struct ExpandDeferredInput<'a, F: ark_ff::FftField + PrimeField> {
 /// Output of [`expand_deferred`] — the set of derived scalars the wrap
 /// statement commits to, plus the newly sampled challenges and auxiliary
 /// values `run_checks` asserts against the carried claims.
+#[allow(dead_code)]
 pub struct ExpandedDeferred<F> {
     pub plonk: DerivedPlonk<F>,
     pub combined_inner_product: F,

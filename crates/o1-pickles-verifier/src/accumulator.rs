@@ -23,21 +23,33 @@ use alloc::vec::Vec;
 
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::PrimeField;
+use mina_poseidon::sponge::ScalarChallenge as PoseidonScalarChallenge;
 use poly_commitment::commitment::b_poly_coefficients;
-use poly_commitment::ipa::SRS;
+use poly_commitment::ipa::{endos, SRS};
 
+use crate::statement::BulletproofChallenge;
 use crate::{Fp, Vesta};
 
 /// Step-accumulator check: verify the claimed challenge-polynomial
-/// commitment matches the one recomputed from `chals` by MSM against
-/// the first `2^chals.len()` generators of `srs`. Panics if the SRS
-/// is too small.
-///
-/// Mirrors OCaml `Ipa.Step.accumulator_check` (common.ml:154-167) for
-/// the single-proof case — we don't batch because a one-proof terminal
-/// verifier has no reason to.
-pub fn accumulator_check(chals: &[Fp], claimed: Vesta, srs: &SRS<Vesta>) -> bool {
-    let coeffs = b_poly_coefficients(chals);
+/// commitment matches the one recomputed from `raw_chals` by MSM
+/// against the first `2^raw_chals.len()` generators of `srs`. Endo-expands
+/// each prechallenge internally; matches OCaml
+/// `Ipa.Step.accumulator_check` (common.ml:154-167) for the
+/// single-proof case. Panics if the SRS is too small.
+pub fn accumulator_check(
+    raw_chals: &[BulletproofChallenge],
+    claimed: Vesta,
+    srs: &SRS<Vesta>,
+) -> bool {
+    let (_endo_q, endo_r) = endos::<Vesta>();
+    let chals: Vec<Fp> = raw_chals
+        .iter()
+        .map(|bc| {
+            PoseidonScalarChallenge::<Fp>::from_limbs(bc.prechallenge.inner.0).to_field(&endo_r)
+        })
+        .collect();
+
+    let coeffs = b_poly_coefficients(&chals);
     assert!(
         coeffs.len() <= srs.g.len(),
         "SRS too small: need {} generators, have {}",

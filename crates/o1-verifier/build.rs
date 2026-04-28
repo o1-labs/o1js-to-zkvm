@@ -13,7 +13,7 @@ use std::fs;
 use std::path::Path;
 
 use ark_serialize::CanonicalSerialize;
-use o1_pickles_verifier::messages::WrapVkCommitments;
+use o1_pickles_verifier::kimchi_input::WrapVkCommitments;
 use o1_verifier_lib::load_pallas_verifier_index;
 
 const VI_NAME: &str = "simple_chain_wrap_vi.bin";
