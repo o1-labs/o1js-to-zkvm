@@ -9,7 +9,8 @@
 use o1_pickles_verifier::messages::{compute_dummy_wrap_sg, WrapVkCommitments};
 use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_json};
 use o1_pickles_verifier::verify::{
-    host_populate_prev_challenges, host_precompute, verify_wrap_proof_precomputed, WrapVerifySetup,
+    host_populate_prev_challenges, host_precompute, verify_wrap_proof_precomputed, GuestInput,
+    WrapVerifySetup,
 };
 use o1_pickles_verifier::Pallas;
 use o1_verifier_lib::{load_pallas_verifier_index, PallasProof};
@@ -40,11 +41,8 @@ fn run_iteration(label: &str, proof_repr_json: &str, wrap_proof_msgpack: &[u8]) 
     let mut wrap_proof: PallasProof =
         rmp_serde::from_slice(wrap_proof_msgpack).expect("parse wrap proof");
     host_populate_prev_challenges(&mut wrap_proof, &stmt, dummy_sg);
-    let wrap_proof_with_prev =
-        rmp_serde::to_vec(&wrap_proof).expect("re-encode wrap proof with prev_challenges");
 
-    let precomputed = host_precompute(&stmt, &prev_evals);
-    let precomputed_msgpack = rmp_serde::to_vec(&precomputed).expect("rmp-encode HostPrecomputed");
+    let host_precomputed = host_precompute(&stmt, &prev_evals);
 
     let vi = load_pallas_verifier_index(WRAP_VI, WRAP_SRS);
     let vk_commitments = WrapVkCommitments::extract(&vi);
@@ -52,15 +50,13 @@ fn run_iteration(label: &str, proof_repr_json: &str, wrap_proof_msgpack: &[u8]) 
         vk_commitments: &vk_commitments,
     };
 
-    verify_wrap_proof_precomputed(
-        &setup,
-        WRAP_VI,
-        WRAP_SRS,
-        &proof_repr_msgpack,
-        &wrap_proof_with_prev,
-        &precomputed_msgpack,
-    )
-    .unwrap_or_else(|e| panic!("[{}] verify_wrap_proof_precomputed failed: {:?}", label, e));
+    let input = GuestInput {
+        proof_repr_msgpack,
+        wrap_proof,
+        host_precomputed,
+    };
+    verify_wrap_proof_precomputed(&setup, WRAP_VI, WRAP_SRS, input)
+        .unwrap_or_else(|e| panic!("[{}] verify_wrap_proof_precomputed failed: {:?}", label, e));
 }
 
 #[test]

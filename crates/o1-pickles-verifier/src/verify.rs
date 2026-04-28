@@ -55,8 +55,6 @@ use crate::{Fp, Fq, Pallas, Vesta};
 #[derive(Debug)]
 pub enum VerifyError {
     DecodeProofRepr,
-    DecodeWrapProof,
-    DecodePrecomputed,
     KimchiReject,
 }
 
@@ -88,6 +86,22 @@ pub struct WrapVerifySetup<'a> {
     /// 28 single-chunk wrap-VK commitments, in
     /// `index_to_field_elements` order. Constant per circuit.
     pub vk_commitments: &'a WrapVkCommitments,
+}
+
+/// Everything the host hands the SP1 guest in one shot.
+///
+/// `proof_repr_msgpack` is the canonical msgpack of the statement + prev_evals
+/// (`parse::canonical_proof_repr_msgpack`'s output). The guest hashes it to
+/// produce `statement_digest`, then parses it for the wrap statement.
+/// `wrap_proof` is the kimchi `ProverProof` with `prev_challenges` already
+/// populated by the host (mirroring `Wrap_hack.pad_accumulator`).
+/// `host_precomputed` carries the values from `host_precompute` so the
+/// guest can skip `expand_deferred` and the wrap-messages Poseidon.
+#[derive(Serialize, Deserialize)]
+pub struct GuestInput {
+    pub proof_repr_msgpack: Vec<u8>,
+    pub wrap_proof: PallasProof,
+    pub host_precomputed: HostPrecomputed,
 }
 
 /// Output of `expand_deferred` + the wrap-side messages digest, as
@@ -164,36 +178,25 @@ fn build_prev_challenges(
 /// SRS is large and shared across many circuits, so it lives in its
 /// own blob). [`load_pallas_verifier_index`] stitches them together
 /// into `vi.srs`.
-///
-/// `proof_repr_msgpack` is the canonical msgpack from
-/// `parse::canonical_proof_repr_msgpack` (statement + prev_evals); we
-/// consume the statement and hash the bytes for `statement_digest`.
-/// `wrap_proof_bytes` is the kimchi `ProverProof` msgpack — a separate
-/// serialization since pickles' proof_repr JSON carries the kimchi
-/// proof in a shape that's awkward to round-trip directly into
-/// kimchi's serde format. The host populates `prev_challenges` before
-/// encoding `wrap_proof_bytes`.
 pub fn verify_wrap_proof_precomputed(
     setup: &WrapVerifySetup<'_>,
     wrap_vi_bytes: &[u8],
     wrap_srs_bytes: &[u8],
-    proof_repr_msgpack: &[u8],
-    wrap_proof_bytes: &[u8],
-    precomputed_msgpack: &[u8],
+    input: GuestInput,
 ) -> Result<(Vec<Fp>, [u8; 32]), VerifyError> {
-    let statement_digest: [u8; 32] = Sha256::digest(proof_repr_msgpack).into();
+    let GuestInput {
+        proof_repr_msgpack,
+        wrap_proof,
+        host_precomputed: precomp,
+    } = input;
+
+    let statement_digest: [u8; 32] = Sha256::digest(&proof_repr_msgpack).into();
 
     let parsed =
-        parse_proof_repr_msgpack(proof_repr_msgpack).map_err(|_| VerifyError::DecodeProofRepr)?;
+        parse_proof_repr_msgpack(&proof_repr_msgpack).map_err(|_| VerifyError::DecodeProofRepr)?;
     let stmt = parsed.statement;
 
-    let precomp: HostPrecomputed =
-        rmp_serde::from_slice(precomputed_msgpack).map_err(|_| VerifyError::DecodePrecomputed)?;
-
     let wrap_vi = load_pallas_verifier_index(wrap_vi_bytes, wrap_srs_bytes);
-
-    let wrap_proof: PallasProof =
-        rmp_serde::from_slice(wrap_proof_bytes).map_err(|_| VerifyError::DecodeWrapProof)?;
 
     let (_endo_q_step, endo_r_step) = endos::<Vesta>();
     let sponge_digest_fp = stmt.proof_state.sponge_digest_before_evaluations.to_fp();

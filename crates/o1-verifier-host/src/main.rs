@@ -3,7 +3,9 @@ use std::fs;
 use clap::{Parser, Subcommand};
 use o1_pickles_verifier::messages::compute_dummy_wrap_sg;
 use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_msgpack};
-use o1_pickles_verifier::verify::{host_populate_prev_challenges, host_precompute, CommitOutput};
+use o1_pickles_verifier::verify::{
+    host_populate_prev_challenges, host_precompute, CommitOutput, GuestInput,
+};
 use o1_pickles_verifier::Pallas;
 use o1_verifier_lib::PallasProof;
 use poly_commitment::ipa::SRS;
@@ -83,16 +85,13 @@ async fn run_verify(proof_repr_path: &str, wrap_proof_path: &str, wrap_srs_path:
     let srs: SRS<Pallas> = rmp_serde::from_slice(&srs_bytes).expect("parse SRS");
     let dummy_sg = compute_dummy_wrap_sg(&srs);
 
-    let precomputed = host_precompute(&stmt, &prev_evals);
-    let precomputed_msgpack = rmp_serde::to_vec(&precomputed).expect("rmp-encode HostPrecomputed");
+    let host_precomputed = host_precompute(&stmt, &prev_evals);
 
     let wrap_proof_bytes = fs::read(wrap_proof_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", wrap_proof_path));
     let mut wrap_proof: PallasProof =
         rmp_serde::from_slice(&wrap_proof_bytes).expect("parse wrap proof");
     host_populate_prev_challenges(&mut wrap_proof, &stmt, dummy_sg);
-    let wrap_proof_with_prev =
-        rmp_serde::to_vec(&wrap_proof).expect("re-encode wrap proof with prev_challenges");
 
     let statement_digest = Sha256::digest(&proof_repr_msgpack);
     let mut digest_hex = String::with_capacity(64);
@@ -100,10 +99,13 @@ async fn run_verify(proof_repr_path: &str, wrap_proof_path: &str, wrap_srs_path:
         digest_hex.push_str(&format!("{:02x}", b));
     }
 
+    let input = GuestInput {
+        proof_repr_msgpack,
+        wrap_proof,
+        host_precomputed,
+    };
     let mut stdin = SP1Stdin::new();
-    stdin.write_vec(proof_repr_msgpack);
-    stdin.write_vec(wrap_proof_with_prev);
-    stdin.write_vec(precomputed_msgpack);
+    stdin.write(&input);
 
     let client = ProverClient::from_env().await;
     let (mut public_values, report) = client
