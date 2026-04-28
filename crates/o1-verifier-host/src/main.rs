@@ -1,80 +1,139 @@
 use std::fs;
-use std::str::FromStr;
 
-use ark_serialize::CanonicalSerialize;
-use clap::Parser;
-use mina_curves::pasta::Fp;
+use clap::{Parser, Subcommand};
+use o1_pickles_verifier::kimchi_input::{
+    compute_dummy_wrap_sg, host_populate_prev_challenges, host_precompute,
+};
+use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_msgpack};
+use o1_pickles_verifier::verify::{GuestInput, GuestOutput};
+use o1_pickles_verifier::Pallas;
+use o1_verifier_lib::PallasProof;
+use poly_commitment::ipa::SRS;
+use sha2::{Digest, Sha256};
 use sp1_sdk::{include_elf, Elf, Prover, ProverClient, SP1Stdin};
 
 const ELF: Elf = include_elf!("o1-verifier");
 
 #[derive(Parser)]
-#[command(name = "o1-verifier-host")]
-#[command(about = "Run the o1-verifier guest program in the SP1 zkVM")]
+#[command(name = "o1zkvm")]
+#[command(about = "Drive the SP1 wrap-proof verifier or compute its statement digest")]
 struct Cli {
-    /// Path to the proof JSON file (from the TS CLI prove command)
-    #[arg(short, long)]
-    proof: String,
+    #[command(subcommand)]
+    cmd: Cmd,
 }
 
-#[derive(serde::Deserialize)]
-struct ProofOutput {
-    proof: ProofJson,
+#[derive(Subcommand)]
+enum Cmd {
+    /// Run the SP1 verifier against one (proof_repr, wrap_proof) pair.
+    Verify {
+        /// Path to the OCaml-emitted proof_repr JSON.
+        #[arg(long)]
+        proof_repr: String,
+
+        /// Path to the matching wrap kimchi proof msgpack.
+        #[arg(long)]
+        wrap_proof: String,
+
+        /// Path to the wrap SRS msgpack.
+        #[arg(long, default_value = "fixtures/simple_chain_wrap_srs.bin")]
+        wrap_srs: String,
+    },
+
+    /// Print the SHA-256 statement digest the guest would commit.
+    Hash {
+        /// Path to a proof_repr JSON.
+        #[arg(long)]
+        proof_repr: String,
+    },
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProofJson {
-    proof: String,
-    public_input_fields: Vec<String>,
-}
-
-/// Serialize public inputs as a flat byte buffer of 32-byte canonical Fp elements.
-fn serialize_public_inputs(fields: &[Fp]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(fields.len() * 32);
-    for f in fields {
-        let mut buf = Vec::new();
-        f.serialize_compressed(&mut buf)
-            .expect("failed to serialize Fp");
-        bytes.extend_from_slice(&buf);
-    }
-    bytes
+fn read_canonical_msgpack(json_path: &str) -> Vec<u8> {
+    let proof_repr_json = fs::read_to_string(json_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", json_path));
+    canonical_proof_repr_msgpack(&proof_repr_json)
+        .expect("failed to canonicalize proof_repr JSON as msgpack")
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    match cli.cmd {
+        Cmd::Hash { proof_repr } => {
+            let bytes = read_canonical_msgpack(&proof_repr);
+            let digest = Sha256::digest(&bytes);
+            for b in digest.as_slice() {
+                print!("{:02x}", b);
+            }
+            println!();
+        }
+        Cmd::Verify {
+            proof_repr,
+            wrap_proof,
+            wrap_srs,
+        } => run_verify(&proof_repr, &wrap_proof, &wrap_srs).await,
+    }
+}
 
-    let proof_json_str = fs::read_to_string(&cli.proof)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", cli.proof));
-    let proof_output: ProofOutput =
-        serde_json::from_str(&proof_json_str).expect("failed to parse proof JSON");
+async fn run_verify(proof_repr_path: &str, wrap_proof_path: &str, wrap_srs_path: &str) {
+    let proof_repr_msgpack = read_canonical_msgpack(proof_repr_path);
+    let parsed = parse_proof_repr_msgpack(&proof_repr_msgpack).expect("parse proof_repr");
+    let stmt = parsed.statement;
+    let prev_evals = parsed.prev_evals;
 
-    // Decode the proof from base64 msgpack
-    let proof_bytes = base64::decode(&proof_output.proof.proof).expect("invalid base64 in proof");
+    let srs_bytes =
+        fs::read(wrap_srs_path).unwrap_or_else(|e| panic!("failed to read {}: {e}", wrap_srs_path));
+    let srs: SRS<Pallas> = rmp_serde::from_slice(&srs_bytes).expect("parse SRS");
+    let dummy_sg = compute_dummy_wrap_sg(&srs);
 
-    // Parse public inputs as Fp field elements and serialize to canonical bytes
-    let public_input: Vec<Fp> = proof_output
-        .proof
-        .public_input_fields
-        .iter()
-        .map(|s| Fp::from_str(s).expect("invalid public input field element"))
-        .collect();
-    let public_input_bytes = serialize_public_inputs(&public_input);
+    let host_precomputed = host_precompute(&stmt, &prev_evals);
 
-    // Set up SP1 stdin
+    let wrap_proof_bytes = fs::read(wrap_proof_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", wrap_proof_path));
+    let mut wrap_proof: PallasProof =
+        rmp_serde::from_slice(&wrap_proof_bytes).expect("parse wrap proof");
+    host_populate_prev_challenges(&mut wrap_proof, &stmt, dummy_sg);
+
+    let statement_digest = Sha256::digest(&proof_repr_msgpack);
+    let mut digest_hex = String::with_capacity(64);
+    for b in statement_digest.as_slice() {
+        digest_hex.push_str(&format!("{:02x}", b));
+    }
+
+    let input = GuestInput {
+        proof_repr_msgpack,
+        wrap_proof,
+        host_precomputed,
+    };
     let mut stdin = SP1Stdin::new();
-    stdin.write(&proof_bytes);
-    stdin.write(&public_input_bytes);
+    stdin.write(&input);
 
-    // Prover mode is set via SP1_PROVER env var (mock, cpu, cuda, network).
-    // Defaults to cpu. Use SP1_PROVER=mock for dev/testing without GPU.
     let client = ProverClient::from_env().await;
-    let (mut public_values, report) = client.execute(ELF, stdin).await.expect("execution failed");
+    let (mut public_values, report) = client
+        .execute(ELF, stdin)
+        .await
+        .expect("SP1 execution failed");
 
-    let valid: bool = public_values.read();
-    assert!(valid, "Kimchi proof verification failed inside SP1 zkVM");
+    let output_bytes: Vec<u8> = public_values.read();
+    let output = GuestOutput::from_msgpack(&output_bytes).expect("decode GuestOutput from msgpack");
+    assert!(
+        output.valid,
+        "kimchi rejected the wrap proof inside the SP1 zkVM"
+    );
 
-    println!("Kimchi proof verified successfully inside SP1 zkVM!");
-    println!("Execution used {} cycles", report.total_instruction_count());
+    let mut zkvm_digest_hex = String::with_capacity(64);
+    for b in output.statement_digest.iter() {
+        zkvm_digest_hex.push_str(&format!("{:02x}", b));
+    }
+    assert_eq!(
+        digest_hex, zkvm_digest_hex,
+        "host SHA-256 of canonical msgpack disagrees with guest's commitment"
+    );
+
+    println!("wrap proof verified inside SP1 zkVM");
+    println!("  app_state:        {:?}", output.app_state);
+    println!("  statement_digest: 0x{}", zkvm_digest_hex);
+    println!(
+        "  execution used {} cycles",
+        report.total_instruction_count()
+    );
 }

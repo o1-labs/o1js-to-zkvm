@@ -1,22 +1,39 @@
+//! SP1 zkVM guest: slim wrap-proof verifier.
+//!
+//! Build-time constants (embedded via `OUT_DIR` / `include_bytes!`,
+//! see `build.rs`):
+//!  - `simple_chain_wrap_vi.bin` / `simple_chain_wrap_srs.bin`: raw
+//!    msgpack the kimchi verifier consumes.
+//!  - `vk_commitments.bin`: 28 single-chunk wrap-VK commitments.
+//!
+//! Runtime stdin: a single `GuestInput` value.
+//!
+//! Committed public output: `GuestOutput::to_msgpack()` bytes. The
+//! end-verifier deserializes via `GuestOutput::from_msgpack` to read:
+//! - `valid`: kimchi accepted.
+//! - `app_state`: the wrap proof's application-level public input.
+//! - `statement_digest`: SHA-256 of `input.proof_repr_msgpack`.
+
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use o1_verifier_lib::{deserialize_public_inputs, load_verifier_index, verify_kimchi_proof};
+use ark_serialize::CanonicalDeserialize;
 
-static VI_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/verifier_index.bin"));
-static SRS_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/srs.bin"));
+use o1_pickles_verifier::kimchi_input::WrapVkCommitments;
+use o1_pickles_verifier::verify::{verify_wrap_proof_precomputed, GuestInput, WrapVerifySetup};
+
+static WRAP_VI: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/simple_chain_wrap_vi.bin"));
+static WRAP_SRS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/simple_chain_wrap_srs.bin"));
+static VK_COMMITMENTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vk_commitments.bin"));
 
 pub fn main() {
-    let vi = load_verifier_index(VI_BYTES, SRS_BYTES);
+    let vk_commitments = WrapVkCommitments::deserialize_compressed(VK_COMMITMENTS)
+        .expect("baked vk_commitments.bin failed to deserialize");
+    let setup = WrapVerifySetup {
+        vk_commitments: &vk_commitments,
+    };
 
-    let proof_bytes: Vec<u8> = sp1_zkvm::io::read();
-    let public_input_bytes: Vec<u8> = sp1_zkvm::io::read();
-
-    let proof = rmp_serde::from_slice(&proof_bytes).expect("failed to deserialize proof");
-    let public_input = deserialize_public_inputs(&public_input_bytes);
-
-    let mut rng = rand::rngs::OsRng;
-    let valid = verify_kimchi_proof(&vi, &proof, &public_input, &mut rng);
-
-    sp1_zkvm::io::commit(&valid);
+    let input: GuestInput = sp1_zkvm::io::read();
+    let output = verify_wrap_proof_precomputed(&setup, WRAP_VI, WRAP_SRS, input);
+    sp1_zkvm::io::commit(&output.to_msgpack());
 }
