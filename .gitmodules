@@ -1,0 +1,4 @@
+[submodule "mina"]
+	path = mina
+	url = https://github.com/MinaProtocol/mina.git
+	branch = compatible

@@ -1,17 +1,26 @@
-.PHONY: help install deps build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests lint-check lint
+.PHONY: help install deps submodules build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests lint-check lint simple-chain-fixtures
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
+FIXTURES_DIR := $(CURDIR)/fixtures
 
 .DEFAULT_GOAL := help
 
 help: ## Show this help menu
 	@awk 'BEGIN {FS = ":.*?## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: deps ## Install SP1 toolchain, protoc, and npm dependencies
+install: submodules deps ## Install SP1 toolchain, protoc, and npm dependencies
 	./install.sh
 
 deps: ## Install npm dependencies
 	npm ci
+
+submodules: ## Initialize and update git submodules recursively (e.g. mina/proof-systems)
+	git submodule update --init --recursive
+
+simple-chain-fixtures: submodules ## Regenerate Simple_chain fixtures (b0..b3 + shared VI/SRS) from the OCaml executable into $(FIXTURES_DIR). Requires dune; enter the mina nix dev shell first if needed.
+	cd $(CURDIR)/mina && \
+		SIMPLE_CHAIN_FIXTURES_DIR=$(FIXTURES_DIR) \
+		dune exec src/lib/crypto/pickles/simple_chain/simple_chain.exe
 
 build-ts: ## Build the TypeScript CLI (run as `npx o1js-cli ...`)
 	npm run build
