@@ -1,0 +1,16 @@
+[package]
+name = "o1-verifier"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+o1-pickles-verifier = { path = "../o1-pickles-verifier" }
+sp1-zkvm = { workspace = true }
+ark-serialize = { workspace = true }
+
+[build-dependencies]
+o1-pickles-verifier = { path = "../o1-pickles-verifier", features = ["std"] }
+o1-verifier-lib = { path = "../o1-verifier-lib" }
+ark-serialize = { workspace = true, features = ["std"] }
+rmp-serde = { workspace = true }
+poly-commitment = { workspace = true }
