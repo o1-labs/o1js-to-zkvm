@@ -45,6 +45,7 @@ This document explains what data flows where, and why, in the Rust+SP1 verifier.
                                           CommitOutput {
                                             valid: bool,
                                             app_state: Vec<Fp>,
+                                            statement_digest: [u8; 32],
                                           }
                                                  │
                             (Groth16 wrapper consumes this)
@@ -156,44 +157,44 @@ The application circuit's public input (a `Vec<Fp>`). For Simple_chain that's `[
 
 ### Host (`crates/o1-verifier-host/src/main.rs`)
 
-Stateless shuttle:
+Two subcommands:
 
-1. Read `proof_repr_bN.json` → `ProofReprWire` (`serde_json::from_str`).
-2. Re-encode → msgpack bytes (`rmp_serde::to_vec`).
-3. Read `wrap_proof_bN.bin` as raw bytes.
-4. Send both via `SP1Stdin::write`. Read `CommitOutput` on the way back.
+* **`o1zkvm verify`** — runs the full SP1 attestation:
+  1. Read `proof_repr_bN.json` → `ProofReprWire` (`serde_json`).
+  2. Re-encode to canonical msgpack via `rmp_serde::to_vec`. This *exact* byte string is what the guest hashes for `statement_digest`.
+  3. Lower to domain types and run `host_precompute(stmt, prev_evals)` — that's where `expand_deferred` + `hash_messages_for_next_wrap_proof` actually run, in std-land.
+  4. Populate `wrap_proof.prev_challenges` (mirroring `Wrap_hack.pad_accumulator`) and re-encode the proof bytes.
+  5. Feed three msgpack blobs into the guest via stdin: the canonical proof_repr, the proof with prev_challenges populated, and the precomputed-values blob.
+  6. Read back `CommitOutput`. Sanity-check the digest against a host-side SHA-256 over the same canonical bytes (the guest precompile and the host crate produce the same value for the same input).
 
-The host deliberately doesn't lower wire → domain — the guest does that. This keeps the host's input shape stable as we evolve domain types.
+* **`o1zkvm hash --proof-repr <PATH>`** — emit `SHA-256(canonical_proof_repr_msgpack)` for a holder of a JSON statement. They compare to the SP1 commitment without re-running anything.
 
 ### Guest (`crates/o1-verifier/src/main.rs`)
 
-Per-call:
+Slim — only the work that *binds `app_state`* into the kimchi public input stays here:
 
-1. **Deserialize baked constants.** `dummy_sg`, `vk_commitments` from `OUT_DIR` via `CanonicalDeserialize`. The VI/SRS bytes are passed straight to the kimchi loader.
-2. **Read runtime inputs.** `proof_repr_msgpack` + `wrap_proof_bytes` from stdin.
-3. **rmp-decode + lower.** `ProofReprWire` → `WrapStatement` (`parse_wrap_statement`) and `ParsedPrevEvals` (`parse_prev_evals`). Decode `PallasProof` from the wrap-proof bytes.
-4. **Reconstruct `prev_challenges`.** The msgpack proof has empty `prev_challenges`; we override with `(dummy_sg, dummy_chals)` + `(real_sg, expanded_real_chals)` mirroring `Wrap_hack.pad_accumulator`. See `messages::build_simple_chain_prev_challenges`.
-5. **Compute the expanded statement.** `expand_deferred` derives `cip`, `b`, plonk's `perm`/`zeta_to_*`, and a few internal-only fields.
-6. **Hash both messages-for-next-* digests.** Poseidon over Fp (step) and Fq (wrap), inputs include `vk_commitments`, `app_state`, and the prior step proof's accumulator data.
-7. **Pack.** `assemble_wrap_main_input` flattens the expanded statement + digests + raw challenges into the 40-element `Vec<Fq>`.
-8. **kimchi verify.** `kimchi::verifier::verify(group_map, vi, wrap_proof, packed)`.
-9. **Commit.** `CommitOutput { valid, app_state }`.
+1. **Deserialize baked constants.** `dummy_sg`, `vk_commitments` from `OUT_DIR` via `CanonicalDeserialize`. VI/SRS bytes pass straight to the kimchi loader.
+2. **Read runtime inputs** via `io::read_vec()`: `proof_repr_msgpack`, `wrap_proof_bytes` (already with `prev_challenges` populated), `host_precomputed_msgpack`.
+3. **SHA-256 the proof_repr msgpack** via SP1's precompile-patched `sha2::Sha256` → `statement_digest`. (~9.5 cycles per 64-byte block.)
+4. **rmp-decode + lower.** `ProofReprWire` → `WrapStatement` (`parse_wrap_statement`). `prev_evals` is *not* decoded in the guest — `expand_deferred` already ran on the host.
+5. **Compute `step_messages_digest_fp`.** Poseidon over `app_state` + the baked `vk_commitments` + `step_prev_proofs` from the statement. This is the only Poseidon call in the guest, and the only piece of binding that *can't* move to the host: `app_state` flows through this digest into the kimchi public input.
+6. **Pack.** `assemble_wrap_main_input` combines the host-supplied expanded values + the Poseidon digest we just computed + raw challenges from the statement into the 40-element `Vec<Fq>`.
+7. **kimchi verify.** `kimchi::verifier::verify(group_map, vi, wrap_proof, packed)`. Wrong host-supplied values → kimchi rejects (the wrap circuit re-derives them internally and the equalities fail).
+8. **Commit.** `CommitOutput { valid, app_state, statement_digest }`.
 
-## Why does the verifier run `expand_deferred`?
+## Why doesn't the guest run `expand_deferred`?
 
 The wrap proof was generated against the *expanded* statement — kimchi already saw those values when it committed to the wrap circuit's public input at proving time. Internally, pickles' next step circuit reads them too: in a chain b0 → b1, the expanded values from b0 enter b1's witness, and b1's step circuit asserts they match what's in b0's wrap-proof public input.
 
-So why does our verifier run the expansion again? Because the *external* `Pickles.Proof.t` form drops them. When OCaml serializes a proof to disk via `Proof.Make.to_yojson_full`, only the minimal statement makes it through. The expansion is deterministic from `(minimal statement, prev_evals)`, so the smaller form is enough for anyone willing to do the work — and pickles consumers (including us) are expected to do exactly that to reconstruct kimchi's public input.
-
-In other words, three places run the same expansion:
+So three places already produce this expansion:
 
 1. **Wrap circuit at proving time** — derives the expanded values from witnessed (minimal statement + evals) and binds them into its public input slots, which kimchi commits to.
 2. **Next step circuit when consuming the proof recursively** — re-derives the same values and asserts equality with what's in the wrap proof's public input slots, to prove it knows the statement honestly.
-3. **Our verifier here** — re-derives the same values to reconstruct the kimchi public input the wrap proof was generated against, so we can hand it back to kimchi.
+3. **Anyone reconstructing the kimchi public input from the on-disk minimal form** — needs to redo it because `Pickles.Proof.t` only serializes the minimal statement.
 
-(1) is the prover's side, (2) is what makes pickles recursive, (3) is what makes verification possible from the smaller-on-disk minimal form.
+For (3), a verifier is just trying to figure out *what to feed kimchi*. If kimchi accepts, the wrap circuit's internal re-derivation matches whatever we packed. So an external party who computes the expansion on the **host side** and hands it to the guest is sound — kimchi rejects any lie. Moving (3) to the host is what makes the guest small.
 
-There's no shortcut for (3) without modifying pickles to expose `Wrap_deferred_values.expand_deferred` outside the library — the expanded statement is never serialized externally.
+The `app_state`-binding Poseidon (step messages digest) is the one piece that *can't* move: if the host computed it and lied, the guest's `app_state` commitment would be unmoored from what kimchi actually verified. So that hash stays in-zkVM.
 
 ## Trust boundaries
 
@@ -202,7 +203,7 @@ There's no shortcut for (3) without modifying pickles to expose `Wrap_deferred_v
 | Build-time constants (`dummy_sg`, `vk_commitments`) | the fixtures + Rust helpers | nothing dynamic; computed once and baked |
 | Host → Guest | the wire format (rmp roundtrip) | nothing — host is untrusted with respect to the SP1 attestation |
 | Guest → kimchi verifier | the packed input being well-formed | the wrap proof against the packed input |
-| Guest → end verifier | the SP1 proof system | reads `(valid, app_state)` as public output |
+| Guest → end verifier | the SP1 proof system | reads `(valid, app_state, statement_digest)` as public output |
 
 The host can hand the guest *any* bytes. If they're bogus, parsing fails (commits `valid=false`) or kimchi rejects (commits `valid=false`). If they parse and verify, kimchi has accepted a wrap proof whose `app_state` is what the guest commits.
 
@@ -218,13 +219,13 @@ Consequence: things that were OCaml-side fixtures derived from internal pickles 
 
 ## Soundness summary
 
-What does the Groth16-wrapping end-verifier learn when it sees a valid SP1 proof committing `CommitOutput { valid: true, app_state: X }`?
+What does the Groth16-wrapping end-verifier learn when it sees a valid SP1 proof committing `CommitOutput { valid: true, app_state: X, statement_digest: D }`?
 
-That somewhere, *some* prover ran the SP1 guest with *some* pair of (proof_repr_msgpack, wrap_proof_bytes), and:
+That somewhere, *some* prover ran the SP1 guest with input bytes whose canonical `proof_repr` msgpack hashed to `D`, and:
 
-1. The bytes parsed cleanly into a Simple_chain wrap proof and statement.
-2. Running `expand_deferred` + Poseidon-hashing-with-the-baked-`vk_commitments` produced a 40-Fq packed input.
-3. kimchi accepted that wrap proof against that packed input *under the baked VI/SRS*.
-4. The `app_state` in the statement is the `X` it committed.
+1. Those bytes parsed cleanly into a Simple_chain wrap proof and statement.
+2. The `host_precompute` outputs the host supplied (cip, b, perm, zeta_to_*, wrap-side digest) were the *unique* values consistent with that proof — kimchi rejects any others, since the wrap circuit re-derives them internally and asserts equality against the public input.
+3. The Poseidon hash the guest itself computed over `(vk_commitments, X, step_prev_proofs)` is what the wrap circuit's public input contains at the step-digest slot.
+4. kimchi accepted the wrap proof against the resulting 40-Fq packed input *under the baked VI/SRS*.
 
-Steps 1–3 transitively imply: the wrap circuit's witness derives the same expanded values from the minimal statement, those expanded values match what we packed (because kimchi accepted), and the messages-for-next-step digest in the packed input was derived from the *same* `vk_commitments` and `app_state` as the guest used to compute it. So the Groth16 layer's view of `app_state` corresponds to the actual application state attested by the wrap proof.
+Together these imply: a holder of the *original* `proof_repr_bN.json` can recompute `D = SHA-256(canonical_msgpack(file))` locally (via `o1zkvm hash`), match it against the SP1 commitment, and conclude "this attestation is for *my* statement," and the `app_state` in the commitment is the application-level public input that wrap proof was actually built against.

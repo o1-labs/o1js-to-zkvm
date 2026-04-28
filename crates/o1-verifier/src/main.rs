@@ -1,30 +1,35 @@
-//! SP1 zkVM guest: verify one Simple_chain wrap proof.
+//! SP1 zkVM guest: slim Simple_chain wrap-proof verifier.
 //!
 //! Build-time constants (embedded via `OUT_DIR` / `include_bytes!`,
 //! see `build.rs`):
-//!  - `simple_chain_wrap_vi.bin` / `simple_chain_wrap_srs.bin`: the
-//!    raw msgpack the kimchi verifier consumes.
-//!  - `dummy_wrap_sg.bin`: the `Wrap_hack.pad_accumulator` front-pad
-//!    Pallas point. Function of the SRS only — bake to avoid a 2^15
-//!    MSM on every guest run.
-//!  - `vk_commitments.bin`: the 28 single-chunk wrap-VK commitments
-//!    in pickles `index_to_field_elements` order. Constant per
-//!    circuit; baked to avoid the per-call extraction.
+//!  - `simple_chain_wrap_vi.bin` / `simple_chain_wrap_srs.bin`: raw
+//!    msgpack the kimchi verifier consumes.
+//!  - `dummy_wrap_sg.bin`: `Wrap_hack.pad_accumulator`'s front-pad.
+//!  - `vk_commitments.bin`: 28 single-chunk wrap-VK commitments.
 //!
 //! Runtime stdin (in order):
-//!  1. `proof_repr_msgpack: Vec<u8>` — `ProofReprWire` encoded with
-//!     rmp-serde by the host (JSON-decoded from the OCaml fixture and
-//!     re-encoded as msgpack so we don't pay JSON-parse cycles).
-//!  2. `wrap_proof_bytes: Vec<u8>` — kimchi `ProverProof` msgpack as
-//!     emitted by `simple_chain.exe`.
+//!  1. `proof_repr_msgpack: Vec<u8>` — `ProofReprWire` rmp-encoded.
+//!     Hashed via the SHA-256 precompile to produce the
+//!     `statement_digest` we commit; the user-side `o1zkvm hash`
+//!     subcommand reproduces this from their JSON.
+//!  2. `wrap_proof_bytes: Vec<u8>` — kimchi `ProverProof` msgpack.
+//!     `prev_challenges` is populated by the host before encoding.
+//!  3. `host_precomputed_msgpack: Vec<u8>` — `expand_deferred` outputs
+//!     + `wrap_messages_digest_fq`. The host runs these once in
+//!     std-land; the guest skips the heavy Polish-token interpreter.
+//!     Wrong values → kimchi rejects (the wrap circuit re-derives
+//!     them internally and asserts equality with the public input).
 //!
-//! Committed public output: a [`CommitOutput`] carrying `(valid,
-//! app_state)`. `app_state` is the application circuit's public input
-//! — for Simple_chain, the (initial, current) `Vec<Fp>` pair. The
-//! Groth16-wrapping end-verifier reads it to learn what the wrap
-//! proof attests to. Internal decode failures (bad msgpack, etc.)
-//! and kimchi rejection both yield `valid = false` with empty
-//! `app_state`.
+//! Committed public output: [`CommitOutput`]. End-verifier reads:
+//! - `valid`: kimchi accepted.
+//! - `app_state`: the wrap proof's application-level public input.
+//!   Bound into the kimchi public input via Poseidon, so a kimchi-
+//!   accepted run guarantees the committed `app_state` matches what
+//!   the wrap circuit was committed against.
+//! - `statement_digest`: SHA-256 of `proof_repr_msgpack`. Lets a
+//!   holder of the same serialized statement verify "this SP1
+//!   attestation corresponds to *my* statement" without re-running
+//!   the verifier.
 
 #![no_main]
 sp1_zkvm::entrypoint!(main);
@@ -32,7 +37,7 @@ sp1_zkvm::entrypoint!(main);
 use ark_serialize::CanonicalDeserialize;
 
 use o1_pickles_verifier::messages::WrapVkCommitments;
-use o1_pickles_verifier::verify::{verify_wrap_proof, CommitOutput, WrapVerifySetup};
+use o1_pickles_verifier::verify::{verify_wrap_proof_precomputed, CommitOutput, WrapVerifySetup};
 use o1_pickles_verifier::Pallas;
 
 static WRAP_VI: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/simple_chain_wrap_vi.bin"));
@@ -50,23 +55,27 @@ pub fn main() {
         vk_commitments: &vk_commitments,
     };
 
-    let proof_repr_msgpack: Vec<u8> = sp1_zkvm::io::read();
-    let wrap_proof_bytes: Vec<u8> = sp1_zkvm::io::read();
+    let proof_repr_msgpack: Vec<u8> = sp1_zkvm::io::read_vec();
+    let wrap_proof_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
+    let host_precomputed_msgpack: Vec<u8> = sp1_zkvm::io::read_vec();
 
-    let output = match verify_wrap_proof(
+    let output = match verify_wrap_proof_precomputed(
         &setup,
         WRAP_VI,
         WRAP_SRS,
         &proof_repr_msgpack,
         &wrap_proof_bytes,
+        &host_precomputed_msgpack,
     ) {
-        Ok(app_state) => CommitOutput {
+        Ok((app_state, statement_digest)) => CommitOutput {
             valid: true,
             app_state,
+            statement_digest,
         },
         Err(_) => CommitOutput {
             valid: false,
             app_state: Vec::new(),
+            statement_digest: [0u8; 32],
         },
     };
 
