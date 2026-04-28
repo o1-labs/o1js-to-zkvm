@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = ["crates/o1-verifier-lib"]
+exclude = ["mina"]
+
+[workspace.dependencies]
+kimchi = { path = "mina/src/lib/crypto/proof-systems/kimchi", default-features = false }
+poly-commitment = { path = "mina/src/lib/crypto/proof-systems/poly-commitment", default-features = false }
+mina-curves = { path = "mina/src/lib/crypto/proof-systems/curves", default-features = false }
+mina-poseidon = { path = "mina/src/lib/crypto/proof-systems/poseidon", default-features = false }
+groupmap = { path = "mina/src/lib/crypto/proof-systems/groupmap", default-features = false }
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.2" }
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.2" }
+sp1-build = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.2" }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+serde_with = { version = "3", default-features = false, features = ["macros"] }
+ark-ec = { version = "0.5", default-features = false }
+ark-ff = { version = "0.5", default-features = false }
+ark-poly = { version = "0.5", default-features = false }
+ark-serialize = { version = "0.5", default-features = false }
+blake2 = { version = "0.10", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+rmp-serde = { version = "1", default-features = false }
+base64 = { version = "0.13", default-features = false }
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context", "suggestions"] }
+tokio = { version = "1", default-features = false, features = ["full"] }
+
+# SP1 SHA-256 precompile patch — only kicks in when building for the
+# SP1 RISC-V target. On the host, this resolves to the regular sha2
+# crate, so the host-side `o1zkvm hash` CLI stays portable. The
+# guest's `Sha256::digest(proof_repr_msgpack)` dispatches via the
+# precompile syscall (~9.5 cycles/block) instead of the software
+# round function (~30k cycles/block).
+[patch.crates-io]
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.0.0" }
