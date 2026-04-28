@@ -12,7 +12,8 @@
     "format": "prettier --write src test",
     "format:check": "prettier --check src test",
     "test": "node dist/test/cube-root.test.js",
-    "cli": "node dist/src/cli.js"
+    "cli": "node dist/src/cli.js",
+    "submodules": "git submodule update --init --recursive"
   },
   "keywords": [],
   "author": "",

@@ -1,0 +1,21 @@
+[package]
+name = "o1-verifier-host"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "o1zkvm"
+path = "src/main.rs"
+
+[dependencies]
+o1-pickles-verifier = { path = "../o1-pickles-verifier", features = ["std"] }
+o1-verifier-lib = { path = "../o1-verifier-lib" }
+poly-commitment = { workspace = true }
+sp1-sdk = { workspace = true }
+rmp-serde = { workspace = true }
+sha2 = { workspace = true, features = ["std"] }
+clap = { workspace = true }
+tokio = { workspace = true }
+
+[build-dependencies]
+sp1-build = { workspace = true }

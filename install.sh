@@ -3,6 +3,10 @@ set -euo pipefail
 
 PROTOC_VERSION="27.3"
 
+# (0) Git submodules (mina + proof-systems)
+echo "==> Initializing git submodules..."
+git submodule update --init --recursive
+
 # (1) SP1 toolchain
 if [ -x "$HOME/.sp1/bin/cargo-prove" ]; then
   echo "==> SP1 toolchain already installed, skipping."
