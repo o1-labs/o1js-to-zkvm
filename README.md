@@ -16,8 +16,8 @@ Installs the SP1 toolchain, protoc, and npm dependencies.
 ## Build
 
 ```sh
-make build-ts                                       # TypeScript CLI
-CIRCUIT_JSON=fixtures/circuit.json make build-rust  # Rust o1zkvm binary
+make build-ts        # TypeScript CLI
+make build-rust      # Rust o1zkvm binary (embeds wrap VI/SRS from fixtures/)
 ```
 
 ## End-to-end test
@@ -26,5 +26,5 @@ CIRCUIT_JSON=fixtures/circuit.json make build-rust  # Rust o1zkvm binary
 make rust-e2e-tests
 ```
 
-Compiles the circuit, generates a proof, and verifies it inside the
-SP1 zkVM (mock mode).
+Verifies the checked-in `simple_chain` wrap proofs (b0 and b1) inside
+the SP1 zkVM (mock mode).

@@ -1,10 +1,6 @@
 .PHONY: help install deps submodules build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests lint-check lint simple-chain-fixtures
 
-CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
-SIMPLE_CHAIN_WRAP_VI_FIXTURE := $(CURDIR)/fixtures/simple_chain_wrap_vi.bin
-SIMPLE_CHAIN_WRAP_SRS_FIXTURE := $(CURDIR)/fixtures/simple_chain_wrap_srs.bin
-SIMPLE_CHAIN_WRAP_PROOF_FIXTURE := $(CURDIR)/fixtures/simple_chain_wrap_proof.bin
-SIMPLE_CHAIN_PROOF_REPR_JSON_FIXTURE := $(CURDIR)/fixtures/simple_chain_proof_repr.json
+FIXTURES_DIR := $(CURDIR)/fixtures
 
 .DEFAULT_GOAL := help
 
@@ -24,15 +20,14 @@ build-ts: ## Build the TypeScript CLI (run as `npx o1js-cli ...`)
 	npm run build
 	chmod +x dist/src/cli.js
 
-build-rust: submodules ## Build the o1zkvm Rust binary (requires CIRCUIT_JSON env var)
-	@if [ -z "$$CIRCUIT_JSON" ]; then echo "error: CIRCUIT_JSON must be set" >&2; exit 1; fi
-	cargo build --release -p o1-verifier-host
+build-rust: submodules ## Build the o1zkvm Rust binary (embeds wrap VI/SRS from $(FIXTURES_DIR))
+	SIMPLE_CHAIN_FIXTURES_DIR=$(FIXTURES_DIR) cargo build --release -p o1-verifier-host
 
 ts-unit-tests: build-ts ## Run TypeScript unit tests
 	npm test
 
 rust-unit-tests: submodules ## Run native Rust unit and integration tests against the checked-in fixtures
-	cargo test --release -p o1-verifier-lib --features std
+	cargo test --release -p o1-verifier-lib -p o1-pickles-verifier --features std
 
 ts-e2e-tests: build-ts ## Run the TypeScript CLI end-to-end script
 	./scripts/ts-e2e-test.sh
@@ -46,20 +41,17 @@ lint-check: submodules ## Run all linters and formatters in check-only mode
 	cargo fmt -p o1-verifier -p o1-verifier-lib -p o1-verifier-host -p o1-pickles-verifier -- --check
 	# Build the host first so the guest ELF exists for include_elf!
 	# (clippy skips build scripts, so we need to build separately)
-	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
-	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo clippy --all-targets --features std -- -D warnings
+	SIMPLE_CHAIN_FIXTURES_DIR=$(FIXTURES_DIR) cargo build --release -p o1-verifier-host
+	SIMPLE_CHAIN_FIXTURES_DIR=$(FIXTURES_DIR) cargo clippy --all-targets --features std -- -D warnings
 
 lint: submodules ## Run all linters and formatters with auto-fix
 	npm run format
 	npm run lint
 	cargo fmt -p o1-verifier -p o1-verifier-lib -p o1-verifier-host -p o1-pickles-verifier
-	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
-	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo clippy --all-targets --features std --fix --allow-dirty --allow-staged -- -D warnings
+	SIMPLE_CHAIN_FIXTURES_DIR=$(FIXTURES_DIR) cargo build --release -p o1-verifier-host
+	SIMPLE_CHAIN_FIXTURES_DIR=$(FIXTURES_DIR) cargo clippy --all-targets --features std --fix --allow-dirty --allow-staged -- -D warnings
 
-simple-chain-fixtures: submodules ## Regenerate fixtures/simple_chain_wrap_{vi,srs,proof}.bin and simple_chain_proof_repr.json from the OCaml Simple_chain executable (requires dune; enter the mina nix dev shell first if needed)
+simple-chain-fixtures: submodules ## Regenerate Simple_chain fixtures (b0..b3 + shared VI/SRS) from the OCaml executable into $(FIXTURES_DIR). Requires dune; enter the mina nix dev shell first if needed.
 	cd $(CURDIR)/mina && \
-		SIMPLE_CHAIN_WRAP_VI_OUT=$(SIMPLE_CHAIN_WRAP_VI_FIXTURE) \
-		SIMPLE_CHAIN_WRAP_SRS_OUT=$(SIMPLE_CHAIN_WRAP_SRS_FIXTURE) \
-		SIMPLE_CHAIN_WRAP_PROOF_OUT=$(SIMPLE_CHAIN_WRAP_PROOF_FIXTURE) \
-		SIMPLE_CHAIN_PROOF_REPR_JSON_OUT=$(SIMPLE_CHAIN_PROOF_REPR_JSON_FIXTURE) \
+		SIMPLE_CHAIN_FIXTURES_DIR=$(FIXTURES_DIR) \
 		dune exec src/lib/crypto/pickles/simple_chain/simple_chain.exe

@@ -1,35 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
+# End-to-end Rust+SP1 test for the Simple_chain wrap-proof flow.
+#
+# Uses the checked-in `fixtures/simple_chain_*` artifacts (emitted by
+# `make simple-chain-fixtures` from the OCaml `simple_chain.exe`):
+#   - `simple_chain_wrap_vi.bin` and `simple_chain_wrap_srs.bin`
+#     are baked into the guest at build time via build.rs.
+#   - `simple_chain_proof_repr_b{N}.json` and
+#     `simple_chain_wrap_proof_b{N}.bin` are passed to the host CLI
+#     and forwarded to the guest as runtime stdin.
+#
+# We exercise b0 (descends from a dummy base case) and b1 (descends
+# from the real proof b0) under the SP1 mock prover — enough to cover
+# both shapes without bloating CI time. The wider chain b0..b3 is
+# already exercised by `rust-unit-tests` via `wrap_kimchi_verify`.
 
-echo "==> Working directory: $WORK_DIR"
+FIXTURES_DIR="$(pwd)/fixtures"
 
-# Step 1: Build TypeScript CLI
-echo "==> Building TypeScript CLI..."
-make build-ts
-
-# Step 2: Compile the circuit
-echo "==> Compiling circuit..."
-npx o1js-cli compile -o "$WORK_DIR/circuit.json"
-
-# Step 3: Build the o1zkvm host CLI (guest embeds circuit.json at compile time)
 echo "==> Building o1zkvm..."
-CIRCUIT_JSON="$WORK_DIR/circuit.json" make build-rust
+SIMPLE_CHAIN_FIXTURES_DIR="$FIXTURES_DIR" make build-rust
 
-# Step 4: Generate a proof and verify with TS CLI
-echo "==> Generating proof..."
-cat > "$WORK_DIR/inputs.json" <<'JSON'
-{"publicInput": "8", "privateInput": "2"}
-JSON
-npx o1js-cli prove -i "$WORK_DIR/inputs.json" -o "$WORK_DIR/proof.json"
+echo "==> Verifying b0 and b1 inside SP1 zkVM (mock mode)..."
+for n in 0 1; do
+    echo "  -- b${n}"
+    SP1_PROVER=mock target/release/o1zkvm \
+        --proof-repr "$FIXTURES_DIR/simple_chain_proof_repr_b${n}.json" \
+        --wrap-proof "$FIXTURES_DIR/simple_chain_wrap_proof_b${n}.bin"
+done
 
-echo "==> Verifying with TS CLI..."
-npx o1js-cli verify -c "$WORK_DIR/circuit.json" -p "$WORK_DIR/proof.json"
-
-# Step 5: Verify inside SP1 zkVM (mock mode)
-echo "==> Verifying inside SP1 zkVM (mock mode)..."
-SP1_PROVER=mock target/release/o1zkvm --proof "$WORK_DIR/proof.json"
-
-echo "==> All e2e tests passed!"
+echo "==> All Rust+SP1 e2e iterations passed!"
