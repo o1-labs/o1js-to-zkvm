@@ -40,13 +40,13 @@ use kimchi::linearization::expr_linearization;
 use kimchi::proof::RecursionChallenge;
 use mina_poseidon::pasta::fp_kimchi;
 use poly_commitment::commitment::PolyComm;
-use poly_commitment::ipa::{endos, SRS};
+use poly_commitment::ipa::endos;
 
 use o1_verifier_lib::{load_pallas_verifier_index, PallasProof};
 
 use crate::deferred::{endo_expand_scalar, expand_deferred, ExpandDeferredInput};
 use crate::messages::{
-    build_simple_chain_prev_challenges, compute_dummy_wrap_sg, hash_messages_for_next_step_proof,
+    build_simple_chain_prev_challenges, hash_messages_for_next_step_proof,
     hash_messages_for_next_wrap_proof, StepPrevProof, WrapVkCommitments, STEP_IPA_ROUNDS,
     WRAP_IPA_ROUNDS,
 };
@@ -60,7 +60,6 @@ use crate::{Fp, Fq, Pallas, Vesta};
 pub enum VerifyError {
     DecodeProofRepr,
     DecodeWrapProof,
-    DecodePallasSrs,
     LowerStatement,
     LowerPrevEvals,
     BuildDomain,
@@ -68,29 +67,23 @@ pub enum VerifyError {
     KimchiReject,
 }
 
+/// Constants fixed by the wrap circuit + its SRS — everything we can
+/// precompute once at SP1 build time and bake into the guest.
+pub struct WrapVerifySetup<'a> {
+    /// `Dummy.Ipa.Wrap.sg` — the Pallas point that
+    /// `Wrap_hack.pad_accumulator` uses as the front-padding entry's
+    /// commitment. Function only of the (fixed) wrap SRS, so a single
+    /// 32-byte constant per circuit. Without this, the guest would
+    /// MSM 2^15 generators on every run.
+    pub dummy_sg: Pallas,
+    /// 28 single-chunk wrap-VK commitments, in
+    /// `index_to_field_elements` order. Constant per circuit.
+    pub vk_commitments: &'a WrapVkCommitments,
+}
+
 fn digest_to_fp(d: &Digest) -> Fp {
     let bi: BigInt<4> = BigInt::new(d.0);
     Fp::from_bigint(bi).expect("sponge digest fits in Fp")
-}
-
-fn first_chunk(c: &PolyComm<Pallas>) -> Pallas {
-    debug_assert_eq!(c.chunks.len(), 1);
-    c.chunks[0]
-}
-
-fn extract_vk_commitments(
-    vi: &kimchi::verifier_index::VerifierIndex<55, Pallas, SRS<Pallas>>,
-) -> WrapVkCommitments {
-    WrapVkCommitments {
-        sigma_comm: core::array::from_fn(|i| first_chunk(&vi.sigma_comm[i])),
-        coefficients_comm: core::array::from_fn(|i| first_chunk(&vi.coefficients_comm[i])),
-        generic_comm: first_chunk(&vi.generic_comm),
-        psm_comm: first_chunk(&vi.psm_comm),
-        complete_add_comm: first_chunk(&vi.complete_add_comm),
-        mul_comm: first_chunk(&vi.mul_comm),
-        emul_comm: first_chunk(&vi.emul_comm),
-        endomul_scalar_comm: first_chunk(&vi.endomul_scalar_comm),
-    }
 }
 
 fn build_prev_challenges(
@@ -126,27 +119,28 @@ fn build_prev_challenges(
         .collect()
 }
 
-/// Run the full Stage 3 pipeline against one Simple_chain wrap proof
-/// and return whether kimchi accepts.
+/// Run the full Stage 3 pipeline against one Simple_chain wrap proof.
+/// Returns the lowered `app_state` (so the SP1 guest can commit it
+/// alongside the validity flag — that's what the Groth16-wrapping
+/// end-verifier reads). `setup` carries the constants we precompute
+/// at SP1 build time (`dummy_sg`, the 28 VK commitments).
 pub fn verify_wrap_proof(
+    setup: &WrapVerifySetup<'_>,
     wrap_vi_bytes: &[u8],
     wrap_srs_bytes: &[u8],
     proof_repr_msgpack: &[u8],
     wrap_proof_bytes: &[u8],
-) -> Result<(), VerifyError> {
+) -> Result<Vec<Fp>, VerifyError> {
     let repr: ProofReprWire =
         rmp_serde::from_slice(proof_repr_msgpack).map_err(|_| VerifyError::DecodeProofRepr)?;
     let stmt = parse_wrap_statement(repr.statement).map_err(|_| VerifyError::LowerStatement)?;
     let parsed_prev = parse_prev_evals(repr.prev_evals).map_err(|_| VerifyError::LowerPrevEvals)?;
 
     let wrap_vi = load_pallas_verifier_index(wrap_vi_bytes, wrap_srs_bytes);
-    let srs_pallas: SRS<Pallas> =
-        rmp_serde::from_slice(wrap_srs_bytes).map_err(|_| VerifyError::DecodePallasSrs)?;
-    let dummy_sg = compute_dummy_wrap_sg(&srs_pallas);
 
     let mut wrap_proof: PallasProof =
         rmp_serde::from_slice(wrap_proof_bytes).map_err(|_| VerifyError::DecodeWrapProof)?;
-    wrap_proof.prev_challenges = build_prev_challenges(&stmt, dummy_sg);
+    wrap_proof.prev_challenges = build_prev_challenges(&stmt, setup.dummy_sg);
 
     let domain_log2: u32 = u32::from(stmt.proof_state.deferred_values.branch_data.domain_log2);
     let (_endo_q_step, endo_r_step) = endos::<Vesta>();
@@ -221,7 +215,6 @@ pub fn verify_wrap_proof(
     })
     .map_err(|_| VerifyError::ExpandDeferred)?;
 
-    let vk_commitments = extract_vk_commitments(&wrap_vi);
     let step_prev_proofs: Vec<StepPrevProof> = stmt
         .messages_for_next_step_proof
         .challenge_polynomial_commitments
@@ -241,7 +234,7 @@ pub fn verify_wrap_proof(
         })
         .collect();
     let step_messages_digest_fp = hash_messages_for_next_step_proof(
-        &vk_commitments,
+        setup.vk_commitments,
         &stmt.messages_for_next_step_proof.app_state,
         &step_prev_proofs,
     );
@@ -301,5 +294,5 @@ pub fn verify_wrap_proof(
         poly_commitment::ipa::OpeningProof<Pallas, 55>,
     >(&group_map, &wrap_vi, &wrap_proof, &packed)
     .map_err(|_| VerifyError::KimchiReject)?;
-    Ok(())
+    Ok(stmt.messages_for_next_step_proof.app_state)
 }

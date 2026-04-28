@@ -20,13 +20,16 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
+
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use blake2::{Blake2s256, Digest};
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::{fp_kimchi, fq_kimchi, FULL_ROUNDS};
 use mina_poseidon::poseidon::{ArithmeticSponge, Sponge};
 use mina_poseidon::sponge::ScalarChallenge as PoseidonScalarChallenge;
-use poly_commitment::commitment::b_poly_coefficients;
+use poly_commitment::commitment::{b_poly_coefficients, PolyComm};
 use poly_commitment::ipa::{endos, SRS};
 
 use crate::{Fp, Fq, Pallas, Vesta};
@@ -48,6 +51,12 @@ pub const WRAP_IPA_ROUNDS: usize = 15;
 /// Verification-key commitments from the wrap VK. Fed into the step-side
 /// digest in kimchi-fixed order (`index_to_field_elements` in
 /// `pickles_base/side_loaded_verification_key.ml:154-178`).
+///
+/// `CanonicalSerialize`/`Deserialize` lets us bake the extracted
+/// commitments into the SP1 guest's read-only memory at build time
+/// (see `crates/o1-verifier/build.rs`) instead of recomputing the
+/// per-Pallas-point chunking on every guest run.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct WrapVkCommitments {
     /// 7 sigma commitments (`PERMUTS = 7`).
     pub sigma_comm: [Pallas; 7],
@@ -59,6 +68,30 @@ pub struct WrapVkCommitments {
     pub mul_comm: Pallas,
     pub emul_comm: Pallas,
     pub endomul_scalar_comm: Pallas,
+}
+
+impl WrapVkCommitments {
+    /// Pull the 28 single-chunk wrap-VK commitments out of a kimchi
+    /// `VerifierIndex` in pickles `index_to_field_elements` order.
+    /// Single-chunk because Simple_chain's wrap circuit is non-chunked.
+    pub fn extract(
+        vi: &kimchi::verifier_index::VerifierIndex<FULL_ROUNDS, Pallas, SRS<Pallas>>,
+    ) -> Self {
+        fn first_chunk(c: &PolyComm<Pallas>) -> Pallas {
+            assert_eq!(c.chunks.len(), 1, "expected single-chunk commitment");
+            c.chunks[0]
+        }
+        Self {
+            sigma_comm: core::array::from_fn(|i| first_chunk(&vi.sigma_comm[i])),
+            coefficients_comm: core::array::from_fn(|i| first_chunk(&vi.coefficients_comm[i])),
+            generic_comm: first_chunk(&vi.generic_comm),
+            psm_comm: first_chunk(&vi.psm_comm),
+            complete_add_comm: first_chunk(&vi.complete_add_comm),
+            mul_comm: first_chunk(&vi.mul_comm),
+            emul_comm: first_chunk(&vi.emul_comm),
+            endomul_scalar_comm: first_chunk(&vi.endomul_scalar_comm),
+        }
+    }
 }
 
 /// One previous proof's contribution to the step-side digest: its

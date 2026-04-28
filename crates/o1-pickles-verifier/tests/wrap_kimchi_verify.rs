@@ -60,26 +60,6 @@ fn digest_to_fp(d: &Digest) -> Fp {
     Fp::from_bigint(bi).expect("sponge digest fits in Fp")
 }
 
-fn first_chunk(c: &PolyComm<Pallas>) -> Pallas {
-    assert_eq!(c.chunks.len(), 1, "expected single-chunk commitment");
-    c.chunks[0]
-}
-
-fn extract_vk_commitments(
-    vi: &kimchi::verifier_index::VerifierIndex<55, Pallas, SRS<Pallas>>,
-) -> WrapVkCommitments {
-    WrapVkCommitments {
-        sigma_comm: core::array::from_fn(|i| first_chunk(&vi.sigma_comm[i])),
-        coefficients_comm: core::array::from_fn(|i| first_chunk(&vi.coefficients_comm[i])),
-        generic_comm: first_chunk(&vi.generic_comm),
-        psm_comm: first_chunk(&vi.psm_comm),
-        complete_add_comm: first_chunk(&vi.complete_add_comm),
-        mul_comm: first_chunk(&vi.mul_comm),
-        emul_comm: first_chunk(&vi.emul_comm),
-        endomul_scalar_comm: first_chunk(&vi.endomul_scalar_comm),
-    }
-}
-
 fn build_prev_challenges_rust(
     stmt: &WrapStatement,
     dummy_sg: Pallas,
@@ -207,7 +187,7 @@ fn run_iteration(iter_label: &str, proof_repr_json: &str, wrap_proof_bytes: &[u8
     })
     .expect("expand_deferred");
 
-    let vk_commitments = extract_vk_commitments(&wrap_vi);
+    let vk_commitments = WrapVkCommitments::extract(&wrap_vi);
     let step_prev_proofs: Vec<StepPrevProof> = stmt
         .messages_for_next_step_proof
         .challenge_polynomial_commitments

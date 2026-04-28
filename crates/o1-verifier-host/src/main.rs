@@ -9,6 +9,7 @@ use std::fs;
 
 use clap::Parser;
 use o1_pickles_verifier::wire::ProofReprWire;
+use o1_pickles_verifier::Fp;
 use sp1_sdk::{include_elf, Elf, Prover, ProverClient, SP1Stdin};
 
 const ELF: Elf = include_elf!("o1-verifier");
@@ -52,8 +53,13 @@ async fn main() {
     let (mut public_values, report) = client.execute(ELF, stdin).await.expect("execution failed");
 
     let valid: bool = public_values.read();
+    let app_state: Vec<Fp> = public_values.read();
     assert!(valid, "kimchi rejected the wrap proof inside the SP1 zkVM");
 
     println!("Simple_chain wrap proof verified inside SP1 zkVM");
-    println!("execution used {} cycles", report.total_instruction_count());
+    println!("  app_state: {:?}", app_state);
+    println!(
+        "  execution used {} cycles",
+        report.total_instruction_count()
+    );
 }
