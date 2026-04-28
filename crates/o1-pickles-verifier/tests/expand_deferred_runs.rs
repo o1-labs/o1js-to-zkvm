@@ -138,6 +138,7 @@ fn simple_chain_expand_deferred_runs_on_real_prev_evals() {
         zk_rows: ZK_ROWS,
         srs_length_log2: SRS_LENGTH_LOG2,
         endo: endo_r,
+        linearization_endo_coefficient: endos::<o1_pickles_verifier::Pallas>().0,
         linearization_constant_term: &linearization.constant_term,
         domain,
         mds,

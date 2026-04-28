@@ -457,8 +457,15 @@ pub struct FtEval0Input<'a, F: ark_ff::FftField> {
     pub zk_rows: u32,
     /// log2 of the SRS length.
     pub srs_length_log2: u32,
-    /// Curve endo coefficient for `F`.
+    /// Scalar endo for the step inner curve (Vesta scalar endo, λ_Vesta in
+    /// Fp). Used by `expand_plonk_minimal` and for `joint_combiner`'s
+    /// endo expansion.
     pub endo: F,
+    /// `endo_coefficient` constant for the linearization Constants record
+    /// (Pallas base endo, ξ_Pallas in Fp). DIFFERENT from `endo` above —
+    /// see PS `Snarky/Types/Shifted.purs` and OCaml
+    /// `Endo.Step_inner_curve.base`.
+    pub linearization_endo_coefficient: F,
     /// Linearization-polynomial constant-term token stream, from
     /// `kimchi::linearization::expr_linearization`.
     pub linearization_constant_term: &'a [kimchi::circuits::expr::PolishToken<
@@ -526,7 +533,7 @@ pub fn ft_eval0<F: ark_ff::FftField + PrimeField>(
     });
 
     let constants = kimchi::circuits::expr::Constants {
-        endo_coefficient: input.endo,
+        endo_coefficient: input.linearization_endo_coefficient,
         mds: input.mds,
         zk_rows: u64::from(input.zk_rows),
     };
@@ -606,7 +613,15 @@ pub struct ExpandDeferredInput<'a, F: ark_ff::FftField + PrimeField> {
     pub domain_log2: u32,
     pub zk_rows: u32,
     pub srs_length_log2: u32,
+    /// Scalar endo for the step inner curve (Vesta's scalar endo, λ_Vesta in
+    /// Fp). Used for endo-expanding scalar challenges (alpha, zeta, xi, r,
+    /// bp_chals). Mirrors OCaml `Endo.Wrap_inner_curve.scalar`.
     pub endo: F,
+    /// Linearization Constants `endo_coefficient` — the cube root of unity
+    /// in the step inner curve's BASE field (Pallas's base endo, ξ_Pallas
+    /// in Fp). DIFFERENT from `endo` above. Mirrors OCaml
+    /// `Endo.Step_inner_curve.base`.
+    pub linearization_endo_coefficient: F,
 
     pub linearization_constant_term: &'a [kimchi::circuits::expr::PolishToken<
         F,
@@ -764,6 +779,7 @@ pub fn expand_deferred<F: ark_ff::FftField + PrimeField>(
         zk_rows: input.zk_rows,
         srs_length_log2: input.srs_length_log2,
         endo: input.endo,
+        linearization_endo_coefficient: input.linearization_endo_coefficient,
         linearization_constant_term: input.linearization_constant_term,
         domain: input.domain,
         mds: input.mds,
