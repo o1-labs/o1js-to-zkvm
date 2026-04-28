@@ -54,8 +54,8 @@ fn run_iteration(label: &str, proof_repr_json: &str, wrap_proof_msgpack: &[u8]) 
         wrap_proof,
         host_precomputed,
     };
-    verify_wrap_proof_precomputed(&setup, WRAP_VI, WRAP_SRS, input)
-        .unwrap_or_else(|e| panic!("[{}] verify_wrap_proof_precomputed failed: {:?}", label, e));
+    let output = verify_wrap_proof_precomputed(&setup, WRAP_VI, WRAP_SRS, input);
+    assert!(output.valid, "[{}] kimchi rejected the wrap proof", label);
 }
 
 #[test]

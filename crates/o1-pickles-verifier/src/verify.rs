@@ -34,12 +34,6 @@ use crate::kimchi_input::{assemble_kimchi_public_input, HostPrecomputed, WrapVkC
 use crate::parse::parse_proof_repr_msgpack;
 use crate::{Fp, Pallas};
 
-#[derive(Debug)]
-pub enum VerifyError {
-    DecodeProofRepr,
-    KimchiReject,
-}
-
 /// What the SP1 guest commits as its public output:
 ///
 /// * `valid`: whether kimchi accepted.
@@ -52,14 +46,40 @@ pub enum VerifyError {
 ///   verify "the SP1 proof attests to *my* statement, not just one
 ///   with matching `app_state`."
 ///
-/// Both `valid=false` and decode failures yield empty `app_state`
-/// and a zero `statement_digest`.
+/// Any decode/verify failure yields `valid=false` with empty
+/// `app_state` and a zero `statement_digest`.
+///
+/// Use [`GuestOutput::to_msgpack`] in the guest to produce the bytes
+/// for `sp1_zkvm::io::commit`, and [`GuestOutput::from_msgpack`] on
+/// the host (or end-verifier) to decode the bytes back.
 #[derive(Serialize, Deserialize)]
-pub struct CommitOutput {
+pub struct GuestOutput {
     pub valid: bool,
     #[serde(with = "crate::serde_compat::ark")]
     pub app_state: Vec<Fp>,
     pub statement_digest: [u8; 32],
+}
+
+impl GuestOutput {
+    /// msgpack encoding — the wire format the SP1 guest commits to.
+    /// Stable across SP1 SDK versions, since the guest commits the
+    /// msgpack bytes rather than relying on SP1's default codec.
+    pub fn to_msgpack(&self) -> Vec<u8> {
+        rmp_serde::to_vec(self).expect("rmp-encode GuestOutput")
+    }
+
+    /// Inverse of [`Self::to_msgpack`].
+    pub fn from_msgpack(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
+        rmp_serde::from_slice(bytes)
+    }
+
+    fn failed() -> Self {
+        Self {
+            valid: false,
+            app_state: Vec::new(),
+            statement_digest: [0u8; 32],
+        }
+    }
 }
 
 /// Constants fixed by the wrap circuit — everything we can precompute
@@ -97,12 +117,16 @@ pub struct GuestInput {
 /// SRS is large and shared across many circuits, so it lives in its
 /// own blob. [`load_pallas_verifier_index`] stitches them together
 /// into `vi.srs`.
+///
+/// Always returns a [`GuestOutput`]: any decode or kimchi-rejection
+/// failure produces `valid: false` with empty `app_state` and zero
+/// `statement_digest`.
 pub fn verify_wrap_proof_precomputed(
     setup: &WrapVerifySetup<'_>,
     wrap_vi_bytes: &[u8],
     wrap_srs_bytes: &[u8],
     input: GuestInput,
-) -> Result<(Vec<Fp>, [u8; 32]), VerifyError> {
+) -> GuestOutput {
     let GuestInput {
         proof_repr_msgpack,
         wrap_proof,
@@ -111,8 +135,10 @@ pub fn verify_wrap_proof_precomputed(
 
     let statement_digest: [u8; 32] = Sha256::digest(&proof_repr_msgpack).into();
 
-    let parsed =
-        parse_proof_repr_msgpack(&proof_repr_msgpack).map_err(|_| VerifyError::DecodeProofRepr)?;
+    let parsed = match parse_proof_repr_msgpack(&proof_repr_msgpack) {
+        Ok(p) => p,
+        Err(_) => return GuestOutput::failed(),
+    };
     let stmt = parsed.statement;
 
     let public_input = assemble_kimchi_public_input(&stmt, setup.vk_commitments, &host_precomputed);
@@ -124,7 +150,7 @@ pub fn verify_wrap_proof_precomputed(
     // have a Pasta-curve precompile. Worth baking via build.rs as a
     // follow-up; for now we just call it.
     let group_map = <Pallas as poly_commitment::commitment::CommitmentCurve>::Map::setup();
-    kimchi::verifier::verify::<
+    let kimchi_result = kimchi::verifier::verify::<
         FULL_ROUNDS,
         Pallas,
         mina_poseidon::sponge::DefaultFqSponge<
@@ -138,11 +164,14 @@ pub fn verify_wrap_proof_precomputed(
             FULL_ROUNDS,
         >,
         poly_commitment::ipa::OpeningProof<Pallas, FULL_ROUNDS>,
-    >(&group_map, &wrap_vi, &wrap_proof, &public_input)
-    .map_err(|_| VerifyError::KimchiReject)?;
+    >(&group_map, &wrap_vi, &wrap_proof, &public_input);
 
-    Ok((
-        stmt.messages_for_next_step_proof.app_state,
-        statement_digest,
-    ))
+    match kimchi_result {
+        Ok(()) => GuestOutput {
+            valid: true,
+            app_state: stmt.messages_for_next_step_proof.app_state,
+            statement_digest,
+        },
+        Err(_) => GuestOutput::failed(),
+    }
 }

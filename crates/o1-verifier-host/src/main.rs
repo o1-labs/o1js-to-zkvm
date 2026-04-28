@@ -5,7 +5,7 @@ use o1_pickles_verifier::kimchi_input::{
     compute_dummy_wrap_sg, host_populate_prev_challenges, host_precompute,
 };
 use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_msgpack};
-use o1_pickles_verifier::verify::{CommitOutput, GuestInput};
+use o1_pickles_verifier::verify::{GuestInput, GuestOutput};
 use o1_pickles_verifier::Pallas;
 use o1_verifier_lib::PallasProof;
 use poly_commitment::ipa::SRS;
@@ -113,7 +113,8 @@ async fn run_verify(proof_repr_path: &str, wrap_proof_path: &str, wrap_srs_path:
         .await
         .expect("SP1 execution failed");
 
-    let output: CommitOutput = public_values.read();
+    let output_bytes: Vec<u8> = public_values.read();
+    let output = GuestOutput::from_msgpack(&output_bytes).expect("decode GuestOutput from msgpack");
     assert!(
         output.valid,
         "kimchi rejected the wrap proof inside the SP1 zkVM"
