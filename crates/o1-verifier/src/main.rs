@@ -18,14 +18,13 @@
 //!  2. `wrap_proof_bytes: Vec<u8>` — kimchi `ProverProof` msgpack as
 //!     emitted by `simple_chain.exe`.
 //!
-//! Committed public output: `(valid: bool, app_state: Vec<Fp>)`. The
-//! Groth16-wrapping end-verifier reads `app_state` to learn what the
-//! wrap proof attests to (the application circuit's public input
-//! plays the proxy role for higher-level statements). When kimchi
-//! rejects, `app_state` is committed empty.
-//!
-//! Internal decode failures (bad msgpack, etc.) bubble up as `Err`;
-//! we treat both `Err` and a kimchi reject as `valid = false`.
+//! Committed public output: a [`CommitOutput`] carrying `(valid,
+//! app_state)`. `app_state` is the application circuit's public input
+//! — for Simple_chain, the (initial, current) `Vec<Fp>` pair. The
+//! Groth16-wrapping end-verifier reads it to learn what the wrap
+//! proof attests to. Internal decode failures (bad msgpack, etc.)
+//! and kimchi rejection both yield `valid = false` with empty
+//! `app_state`.
 
 #![no_main]
 sp1_zkvm::entrypoint!(main);
@@ -33,8 +32,8 @@ sp1_zkvm::entrypoint!(main);
 use ark_serialize::CanonicalDeserialize;
 
 use o1_pickles_verifier::messages::WrapVkCommitments;
-use o1_pickles_verifier::verify::{verify_wrap_proof, WrapVerifySetup};
-use o1_pickles_verifier::{Fp, Pallas};
+use o1_pickles_verifier::verify::{verify_wrap_proof, CommitOutput, WrapVerifySetup};
+use o1_pickles_verifier::Pallas;
 
 static WRAP_VI: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/simple_chain_wrap_vi.bin"));
 static WRAP_SRS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/simple_chain_wrap_srs.bin"));
@@ -54,18 +53,22 @@ pub fn main() {
     let proof_repr_msgpack: Vec<u8> = sp1_zkvm::io::read();
     let wrap_proof_bytes: Vec<u8> = sp1_zkvm::io::read();
 
-    let result = verify_wrap_proof(
+    let output = match verify_wrap_proof(
         &setup,
         WRAP_VI,
         WRAP_SRS,
         &proof_repr_msgpack,
         &wrap_proof_bytes,
-    );
-    let (valid, app_state) = match result {
-        Ok(app_state) => (true, app_state),
-        Err(_) => (false, Vec::<Fp>::new()),
+    ) {
+        Ok(app_state) => CommitOutput {
+            valid: true,
+            app_state,
+        },
+        Err(_) => CommitOutput {
+            valid: false,
+            app_state: Vec::new(),
+        },
     };
 
-    sp1_zkvm::io::commit(&valid);
-    sp1_zkvm::io::commit(&app_state);
+    sp1_zkvm::io::commit(&output);
 }

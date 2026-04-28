@@ -43,6 +43,7 @@ use poly_commitment::commitment::PolyComm;
 use poly_commitment::ipa::endos;
 
 use o1_verifier_lib::{load_pallas_verifier_index, PallasProof};
+use serde::{Deserialize, Serialize};
 
 use crate::deferred::{endo_expand_scalar, expand_deferred, ExpandDeferredInput};
 use crate::messages::{
@@ -65,6 +66,23 @@ pub enum VerifyError {
     BuildDomain,
     ExpandDeferred,
     KimchiReject,
+}
+
+/// What the SP1 guest commits as its public output: the verification
+/// flag plus the application-level public input (`app_state`) that
+/// was attested to. The Groth16-wrapping end-verifier reads this to
+/// learn _which_ statement was verified — `app_state` plays the
+/// proxy role for higher-level claims (e.g. "the chain reached
+/// height N with this state"). Empty `app_state` on `valid = false`.
+///
+/// `Vec<Fp>` rides through serde via [`serde_compat::ark`], the
+/// no_std-friendly bridge to `ark-ff`'s `CanonicalSerialize` — see
+/// `serde_compat.rs` for why.
+#[derive(Serialize, Deserialize)]
+pub struct CommitOutput {
+    pub valid: bool,
+    #[serde(with = "crate::serde_compat::ark")]
+    pub app_state: Vec<Fp>,
 }
 
 /// Constants fixed by the wrap circuit + its SRS — everything we can

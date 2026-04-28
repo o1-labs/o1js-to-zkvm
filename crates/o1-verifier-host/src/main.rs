@@ -3,13 +3,14 @@
 //! Takes paths to one OCaml-emitted `proof_repr_b{N}.json` and the
 //! matching `wrap_proof_b{N}.bin`, JSON-decodes the proof_repr into
 //! the wire types, msgpack-re-encodes for the guest, and runs the
-//! SP1 zkVM. Reports whether kimchi accepts.
+//! SP1 zkVM. Reports whether kimchi accepts and prints the
+//! attested-to `app_state`.
 
 use std::fs;
 
 use clap::Parser;
+use o1_pickles_verifier::verify::CommitOutput;
 use o1_pickles_verifier::wire::ProofReprWire;
-use o1_pickles_verifier::Fp;
 use sp1_sdk::{include_elf, Elf, Prover, ProverClient, SP1Stdin};
 
 const ELF: Elf = include_elf!("o1-verifier");
@@ -52,12 +53,14 @@ async fn main() {
     let client = ProverClient::from_env().await;
     let (mut public_values, report) = client.execute(ELF, stdin).await.expect("execution failed");
 
-    let valid: bool = public_values.read();
-    let app_state: Vec<Fp> = public_values.read();
-    assert!(valid, "kimchi rejected the wrap proof inside the SP1 zkVM");
+    let output: CommitOutput = public_values.read();
+    assert!(
+        output.valid,
+        "kimchi rejected the wrap proof inside the SP1 zkVM"
+    );
 
     println!("Simple_chain wrap proof verified inside SP1 zkVM");
-    println!("  app_state: {:?}", app_state);
+    println!("  app_state: {:?}", output.app_state);
     println!(
         "  execution used {} cycles",
         report.total_instruction_count()
