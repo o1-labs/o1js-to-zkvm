@@ -5,7 +5,7 @@ use o1_verifier_lib::{load_pallas_verifier_index, PallasProof};
 
 const WRAP_VI: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_vi.bin");
 const WRAP_SRS: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_srs.bin");
-const WRAP_PROOF: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_proof.bin");
+const WRAP_PROOF: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_proof_b0.bin");
 
 #[test]
 fn parses_simple_chain_wrap_vi_and_srs() {

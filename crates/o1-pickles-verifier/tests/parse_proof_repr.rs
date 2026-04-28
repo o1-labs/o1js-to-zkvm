@@ -1,4 +1,4 @@
-//! Parses `fixtures/simple_chain_proof_repr.json` first into the wire-type
+//! Parses `fixtures/simple_chain_proof_repr_b0.json` first into the wire-type
 //! scaffolding, then lowers through [`o1_pickles_verifier::parse`] into our
 //! domain [`o1_pickles_verifier::statement::WrapStatement`]. Confirms:
 //! 1. the OCaml-side schema matches what our serde derives consume;
@@ -15,7 +15,7 @@ use o1_pickles_verifier::statement::ProofsVerified;
 use o1_pickles_verifier::wire::{ProofReprWire, ProofsVerifiedTag};
 use o1_pickles_verifier::Fp;
 
-const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr.json");
+const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b0.json");
 
 #[test]
 fn parses_simple_chain_proof_repr() {

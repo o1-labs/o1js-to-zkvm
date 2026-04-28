@@ -3,80 +3,74 @@
 //! verifier with the Simple_chain wrap proof + VI fixtures, assert
 //! kimchi accepts.
 //!
-//! If kimchi rejects, every component upstream is suspect: `expand_deferred`,
-//! `hash_messages_*`, or any leaf encoder in `pack`. The accumulator-check
-//! and lib-test suites already cover most leaves; a kimchi reject here
-//! most likely points at field ordering inside `WrapStatementPacked` or
-//! a cross-field encoding edge case.
+//! `prev_challenges` for the wrap kimchi proof is built in Rust from
+//! `(dummy_sg, dummy_chals)` plus the real step-side sg + endo-expanded
+//! IPA prechallenges from the statement (mirroring OCaml
+//! `Wrap_hack.pad_accumulator`). The msgpack `wrap_proof_b{N}.bin`
+//! fixtures carry empty `prev_challenges` — simple_chain emits
+//! `[] [||]` — and we always overwrite with the Rust-built version.
+//!
+//! Per-iteration fixtures: `simple_chain_proof_repr_b{N}.json` +
+//! `simple_chain_wrap_proof_b{N}.bin`. Wrap VI/SRS shared. Test runs
+//! across the full chain b0..b3 to exercise both base-descended (b0,
+//! whose prior step is itself a dummy) and recursive (b1..b3) cases.
 
 #![cfg(feature = "std")]
 
-use std::str::FromStr;
-
-use ark_ff::BigInt;
-use ark_ff::PrimeField;
+use ark_ff::{BigInt, PrimeField};
 use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use groupmap::GroupMap;
 use kimchi::circuits::constraints::FeatureFlags;
 use kimchi::circuits::lookup::lookups::{LookupFeatures, LookupPatterns};
 use kimchi::circuits::polynomials::permutation::Shifts;
 use kimchi::linearization::expr_linearization;
+use kimchi::proof::RecursionChallenge;
 use mina_poseidon::pasta::fp_kimchi;
-use poly_commitment::ipa::endos;
+use poly_commitment::commitment::PolyComm;
+use poly_commitment::ipa::{endos, SRS};
 
 use o1_pickles_verifier::accumulator::accumulator_check;
 use o1_pickles_verifier::deferred::{endo_expand_scalar, expand_deferred, ExpandDeferredInput};
 use o1_pickles_verifier::messages::{
-    hash_messages_for_next_step_proof, hash_messages_for_next_wrap_proof, StepPrevProof,
-    WrapVkCommitments, STEP_IPA_ROUNDS, WRAP_IPA_ROUNDS,
+    build_simple_chain_prev_challenges, compute_dummy_wrap_sg, hash_messages_for_next_step_proof,
+    hash_messages_for_next_wrap_proof, StepPrevProof, WrapVkCommitments, STEP_IPA_ROUNDS,
+    WRAP_IPA_ROUNDS,
 };
 use o1_pickles_verifier::pack::{assemble_wrap_main_input, AssembleInput};
 use o1_pickles_verifier::parse::{parse_prev_evals, parse_wrap_statement};
-use o1_pickles_verifier::statement::Digest;
+use o1_pickles_verifier::statement::{Digest, WrapStatement};
 use o1_pickles_verifier::wire::ProofReprWire;
 use o1_pickles_verifier::{Fp, Fq, Pallas, Vesta};
-use o1_verifier_lib::{load_pallas_verifier_index, verify_pallas_kimchi_proof, PallasProof};
-use poly_commitment::ipa::SRS;
+use o1_verifier_lib::{load_pallas_verifier_index, PallasProof};
 
-const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr.json");
 const WRAP_VI: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_vi.bin");
 const WRAP_SRS: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_srs.bin");
-const WRAP_PROOF: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_proof.bin");
-const PACKED_FIXTURE: &str = include_str!("../../../fixtures/simple_chain_wrap_public_input.json");
 
-fn load_ocaml_packed_input() -> Vec<Fq> {
-    let raw: Vec<String> = serde_json::from_str(PACKED_FIXTURE).expect("parse packed JSON");
-    raw.into_iter()
-        .map(|s| Fq::from_str(&s).expect("Fq decimal string"))
-        .collect()
-}
+const PROOF_REPR_B0: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b0.json");
+const WRAP_PROOF_B0: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_proof_b0.bin");
+const PROOF_REPR_B1: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b1.json");
+const WRAP_PROOF_B1: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_proof_b1.bin");
+const PROOF_REPR_B2: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b2.json");
+const WRAP_PROOF_B2: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_proof_b2.bin");
+const PROOF_REPR_B3: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b3.json");
+const WRAP_PROOF_B3: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_proof_b3.bin");
 
-/// Pack a [`Digest`]'s 4 u64 limbs into Fp (mirrors OCaml
-/// `Digest.Constant.to_tick_field`).
 fn digest_to_fp(d: &Digest) -> Fp {
     let bi: BigInt<4> = BigInt::new(d.0);
     Fp::from_bigint(bi).expect("sponge digest fits in Fp")
 }
 
-/// Take the first chunk of a non-chunked `PolyComm`. Wrap-side commitments
-/// in pickles are single-chunk for Simple_chain.
-fn first_chunk(c: &poly_commitment::commitment::PolyComm<Pallas>) -> Pallas {
+fn first_chunk(c: &PolyComm<Pallas>) -> Pallas {
     assert_eq!(c.chunks.len(), 1, "expected single-chunk commitment");
     c.chunks[0]
 }
 
-/// Extract the 28 wrap VK commitments in pickles `index_to_field_elements`
-/// order. Ports OCaml `Plonk_verification_key_evals.map ~f:(fun x -> [|x|])
-/// key.commitments` for Simple_chain (all single-chunk).
 fn extract_vk_commitments(
     vi: &kimchi::verifier_index::VerifierIndex<55, Pallas, SRS<Pallas>>,
 ) -> WrapVkCommitments {
-    let sigma_comm: [Pallas; 7] = core::array::from_fn(|i| first_chunk(&vi.sigma_comm[i]));
-    let coefficients_comm: [Pallas; 15] =
-        core::array::from_fn(|i| first_chunk(&vi.coefficients_comm[i]));
     WrapVkCommitments {
-        sigma_comm,
-        coefficients_comm,
+        sigma_comm: core::array::from_fn(|i| first_chunk(&vi.sigma_comm[i])),
+        coefficients_comm: core::array::from_fn(|i| first_chunk(&vi.coefficients_comm[i])),
         generic_comm: first_chunk(&vi.generic_comm),
         psm_comm: first_chunk(&vi.psm_comm),
         complete_add_comm: first_chunk(&vi.complete_add_comm),
@@ -86,47 +80,65 @@ fn extract_vk_commitments(
     }
 }
 
-#[test]
-fn simple_chain_wrap_proof_verifies_via_rust_packing() {
-    // ---- 1. Parse fixtures ------------------------------------------------
+fn build_prev_challenges_rust(
+    stmt: &WrapStatement,
+    dummy_sg: Pallas,
+) -> Vec<RecursionChallenge<Pallas>> {
+    assert_eq!(
+        stmt.messages_for_next_step_proof
+            .challenge_polynomial_commitments
+            .len(),
+        1,
+        "Simple_chain mlmb=N1"
+    );
+    assert_eq!(
+        stmt.proof_state
+            .messages_for_next_wrap_proof
+            .old_bulletproof_challenges
+            .len(),
+        1
+    );
+    let real_sg = stmt
+        .messages_for_next_step_proof
+        .challenge_polynomial_commitments[0];
+    let real_limbs: [[u64; 2]; WRAP_IPA_ROUNDS] = core::array::from_fn(|i| {
+        stmt.proof_state
+            .messages_for_next_wrap_proof
+            .old_bulletproof_challenges[0][i]
+            .prechallenge
+            .inner
+            .0
+    });
+    let pairs = build_simple_chain_prev_challenges(dummy_sg, real_sg, real_limbs);
+    pairs
+        .into_iter()
+        .map(|(sg, chals)| RecursionChallenge {
+            comm: PolyComm { chunks: vec![sg] },
+            chals: chals.to_vec(),
+        })
+        .collect()
+}
+
+fn run_iteration(iter_label: &str, proof_repr_json: &str, wrap_proof_bytes: &[u8]) {
+    let wrap_vi = load_pallas_verifier_index(WRAP_VI, WRAP_SRS);
+    let srs_pallas: SRS<Pallas> = rmp_serde::from_slice(WRAP_SRS).expect("parse Pallas SRS");
+    let dummy_sg = compute_dummy_wrap_sg(&srs_pallas);
+
     let repr: ProofReprWire =
-        serde_json::from_str(FIXTURE).expect("failed to deserialize proof repr JSON");
+        serde_json::from_str(proof_repr_json).expect("failed to deserialize proof repr JSON");
     let stmt = parse_wrap_statement(repr.statement).expect("parse statement");
     let parsed_prev = parse_prev_evals(repr.prev_evals).expect("parse prev_evals");
 
-    let wrap_vi = load_pallas_verifier_index(WRAP_VI, WRAP_SRS);
-    let wrap_proof: PallasProof = rmp_serde::from_slice(WRAP_PROOF).expect("parse wrap proof");
-
-    // Sanity on the parsed proof shape.
-    assert_eq!(wrap_proof.prev_challenges.len(), 2);
+    let mut wrap_proof: PallasProof =
+        rmp_serde::from_slice(wrap_proof_bytes).expect("parse wrap proof");
     assert_eq!(wrap_proof.proof.lr.len(), 15);
     assert_eq!(wrap_vi.public, 40, "wrap public-input length is 40");
 
-    // Diagnostic: compare slot-0 of prev_challenges (= dummy) to our computed
-    // dummy_ipa_wrap_challenges_expanded.
-    let our_dummy = o1_pickles_verifier::messages::dummy_ipa_wrap_challenges_expanded();
-    let proof_slot0_chals = &wrap_proof.prev_challenges[0].chals;
-    let mut dummy_mismatches = 0usize;
-    for i in 0..15 {
-        if our_dummy[i] != proof_slot0_chals[i] {
-            dummy_mismatches += 1;
-            if dummy_mismatches <= 3 {
-                eprintln!(
-                    "  dummy chal[{}]: ours = {}, proof = {}",
-                    i, our_dummy[i], proof_slot0_chals[i]
-                );
-            }
-        }
-    }
-    eprintln!(
-        "dummy_ipa_wrap_challenges mismatches: {}/15",
-        dummy_mismatches
-    );
+    wrap_proof.prev_challenges = build_prev_challenges_rust(&stmt, dummy_sg);
 
-    // ---- 2. Step-side constants for expand_deferred ----------------------
     let domain_log2: u32 = u32::from(stmt.proof_state.deferred_values.branch_data.domain_log2);
-    let (_endo_q_step, endo_r_step) = endos::<Vesta>(); // step-field endo (Fp)
-    let (_endo_q_wrap, endo_r_wrap) = endos::<Pallas>(); // wrap-field endo (Fq)
+    let (_endo_q_step, endo_r_step) = endos::<Vesta>();
+    let (_endo_q_wrap, endo_r_wrap) = endos::<Pallas>();
 
     let sponge_params_step = fp_kimchi::static_params();
     let mds_step = &sponge_params_step.mds;
@@ -172,7 +184,6 @@ fn simple_chain_wrap_proof_verifies_via_rust_packing() {
     let sponge_digest_fp = digest_to_fp(&stmt.proof_state.sponge_digest_before_evaluations);
     let public_input_chunks = [parsed_prev.public_evals.zeta];
 
-    // ---- 3. expand_deferred ----------------------------------------------
     let expanded = expand_deferred::<Fp>(ExpandDeferredInput {
         plonk_minimal: &stmt.proof_state.deferred_values.plonk,
         bulletproof_challenges: &stmt.proof_state.deferred_values.bulletproof_challenges,
@@ -196,7 +207,6 @@ fn simple_chain_wrap_proof_verifies_via_rust_packing() {
     })
     .expect("expand_deferred");
 
-    // ---- 4. step-messages digest -----------------------------------------
     let vk_commitments = extract_vk_commitments(&wrap_vi);
     let step_prev_proofs: Vec<StepPrevProof> = stmt
         .messages_for_next_step_proof
@@ -222,7 +232,6 @@ fn simple_chain_wrap_proof_verifies_via_rust_packing() {
         &step_prev_proofs,
     );
 
-    // ---- 5. wrap-messages digest -----------------------------------------
     let wrap_old_bp_chals_expanded: Vec<[Fq; WRAP_IPA_ROUNDS]> = stmt
         .proof_state
         .messages_for_next_wrap_proof
@@ -240,7 +249,6 @@ fn simple_chain_wrap_proof_verifies_via_rust_packing() {
         &wrap_old_bp_chals_expanded,
     );
 
-    // ---- 6. assemble + flatten -------------------------------------------
     let plonk_min = &stmt.proof_state.deferred_values.plonk;
     let packed_struct = assemble_wrap_main_input(AssembleInput {
         combined_inner_product: expanded.combined_inner_product,
@@ -263,106 +271,59 @@ fn simple_chain_wrap_proof_verifies_via_rust_packing() {
     let packed: Vec<Fq> = packed_struct.to_fq_vec();
     assert_eq!(packed.len(), 40);
 
-    // Sanity: Stage 2 still passes when fed expand_deferred's bp chals.
-    let srs: SRS<Vesta> = SRS::create_parallel(1 << STEP_IPA_ROUNDS);
+    let srs_vesta: SRS<Vesta> = SRS::create_parallel(1 << STEP_IPA_ROUNDS);
     assert!(
         accumulator_check(
             &expanded.new_bulletproof_challenges,
             stmt.proof_state
                 .messages_for_next_wrap_proof
                 .challenge_polynomial_commitment,
-            &srs,
+            &srs_vesta,
         ),
-        "Stage 2 accumulator check failed (bug upstream of packing)"
+        "[{}] Stage 2 accumulator check failed (bug upstream of packing)",
+        iter_label
     );
 
-    // ---- 7. slot-by-slot compare against OCaml golden fixture ------------
-    let ocaml_packed = load_ocaml_packed_input();
-    assert_eq!(ocaml_packed.len(), 40);
-    let labels = [
-        "fp_fields[0]=cip",
-        "fp_fields[1]=b",
-        "fp_fields[2]=zeta_to_srs_length",
-        "fp_fields[3]=zeta_to_domain_size",
-        "fp_fields[4]=perm",
-        "challenges[0]=beta",
-        "challenges[1]=gamma",
-        "scalar_challenges[0]=alpha",
-        "scalar_challenges[1]=zeta",
-        "scalar_challenges[2]=xi",
-        "digests[0]=sponge_digest",
-        "digests[1]=msgs_for_next_wrap",
-        "digests[2]=msgs_for_next_step",
-        "bulletproof_challenges[0]",
-        "bulletproof_challenges[1]",
-        "bulletproof_challenges[2]",
-        "bulletproof_challenges[3]",
-        "bulletproof_challenges[4]",
-        "bulletproof_challenges[5]",
-        "bulletproof_challenges[6]",
-        "bulletproof_challenges[7]",
-        "bulletproof_challenges[8]",
-        "bulletproof_challenges[9]",
-        "bulletproof_challenges[10]",
-        "bulletproof_challenges[11]",
-        "bulletproof_challenges[12]",
-        "bulletproof_challenges[13]",
-        "bulletproof_challenges[14]",
-        "bulletproof_challenges[15]",
-        "branch_data",
-        "feature_flags[0]",
-        "feature_flags[1]",
-        "feature_flags[2]",
-        "feature_flags[3]",
-        "feature_flags[4]",
-        "feature_flags[5]",
-        "feature_flags[6]",
-        "feature_flags[7]",
-        "lookup_opt_flag",
-        "lookup_opt_scalar_challenge",
-    ];
-    let mut mismatches: Vec<String> = Vec::new();
-    for i in 0..40 {
-        if packed[i] != ocaml_packed[i] {
-            mismatches.push(format!(
-                "  slot {:>2} ({}): rust = {}, ocaml = {}",
-                i, labels[i], packed[i], ocaml_packed[i]
-            ));
-        }
-    }
-    if !mismatches.is_empty() {
-        // Sanity: kimchi accepts the OCaml-packed input — confirms fixtures
-        // are good and isolates the failure to our packing code.
-        let ocaml_accepted = verify_pallas_kimchi_proof(&wrap_vi, &wrap_proof, &ocaml_packed);
-        let header = format!(
-            "Rust-packed input differs from OCaml golden in {} slots (kimchi accepts OCaml packing: {}):\n{}",
-            mismatches.len(), ocaml_accepted, mismatches.join("\n")
-        );
-        panic!("{}", header);
-    }
-
-    // ---- 8. kimchi wrap verify with Rust-packed input --------------------
-    let group_map =
-        <o1_pickles_verifier::Pallas as poly_commitment::commitment::CommitmentCurve>::Map::setup();
+    let group_map = <Pallas as poly_commitment::commitment::CommitmentCurve>::Map::setup();
     let result = kimchi::verifier::verify::<
         55,
-        o1_pickles_verifier::Pallas,
+        Pallas,
         mina_poseidon::sponge::DefaultFqSponge<
             mina_curves::pasta::PallasParameters,
             mina_poseidon::constants::PlonkSpongeConstantsKimchi,
             55,
         >,
         mina_poseidon::sponge::DefaultFrSponge<
-            o1_pickles_verifier::Fq,
+            Fq,
             mina_poseidon::constants::PlonkSpongeConstantsKimchi,
             55,
         >,
-        poly_commitment::ipa::OpeningProof<o1_pickles_verifier::Pallas, 55>,
+        poly_commitment::ipa::OpeningProof<Pallas, 55>,
     >(&group_map, &wrap_vi, &wrap_proof, &packed);
     assert!(
         result.is_ok(),
-        "kimchi rejected the Rust-packed wrap proof: {:?}",
+        "[{}] kimchi rejected the Rust-packed wrap proof: {:?}",
+        iter_label,
         result
     );
-    let _ = verify_pallas_kimchi_proof; // silence unused-import warning
+}
+
+#[test]
+fn b0_wrap_proof_verifies_via_rust_packing() {
+    run_iteration("b0", PROOF_REPR_B0, WRAP_PROOF_B0);
+}
+
+#[test]
+fn b1_wrap_proof_verifies_via_rust_packing() {
+    run_iteration("b1", PROOF_REPR_B1, WRAP_PROOF_B1);
+}
+
+#[test]
+fn b2_wrap_proof_verifies_via_rust_packing() {
+    run_iteration("b2", PROOF_REPR_B2, WRAP_PROOF_B2);
+}
+
+#[test]
+fn b3_wrap_proof_verifies_via_rust_packing() {
+    run_iteration("b3", PROOF_REPR_B3, WRAP_PROOF_B3);
 }

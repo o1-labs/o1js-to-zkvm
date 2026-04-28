@@ -31,7 +31,7 @@ use o1_pickles_verifier::wire::ProofReprWire;
 use o1_pickles_verifier::{Fp, Vesta};
 use poly_commitment::ipa::{endos, SRS};
 
-const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr.json");
+const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b0.json");
 
 const STEP_IPA_ROUNDS: usize = 16;
 const ZK_ROWS: u32 = 3;

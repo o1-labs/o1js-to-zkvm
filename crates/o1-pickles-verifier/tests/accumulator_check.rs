@@ -15,7 +15,7 @@ use o1_pickles_verifier::wire::ProofReprWire;
 use o1_pickles_verifier::{Fp, Vesta};
 use poly_commitment::ipa::{endos, SRS};
 
-const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr.json");
+const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b0.json");
 
 /// Step IPA rounds for pickles (pasta); SRS depth = 2^16 = 65536.
 const STEP_IPA_ROUNDS: usize = 16;
