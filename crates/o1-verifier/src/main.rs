@@ -15,7 +15,7 @@
 //!  2. `wrap_proof_bytes: Vec<u8>` — kimchi `ProverProof` msgpack.
 //!     `prev_challenges` is populated by the host before encoding.
 //!  3. `host_precomputed_msgpack: Vec<u8>` — `expand_deferred` outputs
-//!     + `wrap_messages_digest_fq`. The host runs these once in
+//!     plus `wrap_messages_digest_fq`. The host runs these once in
 //!     std-land; the guest skips the heavy Polish-token interpreter.
 //!     Wrong values → kimchi rejects (the wrap circuit re-derives
 //!     them internally and asserts equality with the public input).
