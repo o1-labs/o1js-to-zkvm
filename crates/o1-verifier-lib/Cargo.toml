@@ -13,6 +13,7 @@ mina-curves = { workspace = true }
 mina-poseidon = { workspace = true }
 groupmap = { workspace = true }
 serde = { workspace = true }
+serde_with = { version = "3", default-features = false, features = ["macros"] }
 rmp-serde = { version = "1", default-features = false }
 ark-ec = { version = "0.5", default-features = false }
 ark-ff = { version = "0.5", default-features = false }

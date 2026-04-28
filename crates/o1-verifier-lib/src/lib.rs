@@ -3,6 +3,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use groupmap::GroupMap;
 use kimchi::circuits::constraints::FeatureFlags;
 use kimchi::curve::KimchiCurve;
@@ -17,6 +18,62 @@ use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge};
 use poly_commitment::commitment::CommitmentCurve;
 use poly_commitment::ipa::{OpeningProof, SRS};
 use serde::de::DeserializeOwned;
+use serde_with::serde_as;
+
+/// `serde_with` adapter that reads ark types from compressed bytes
+/// while skipping the curve-membership check.
+///
+/// `o1_utils::serialization::SerdeAs` uses `serialize_compressed` plus
+/// `deserialize_compressed` (checked); `SerdeAsUnchecked` uses
+/// `serialize_uncompressed` plus `deserialize_uncompressed_unchecked`.
+/// They're not byte-compatible with each other. kimchi-stubs writes
+/// SRS bytes using `SerdeAs` (compressed), so to read them while
+/// skipping checks we need a "compressed and unchecked" variant,
+/// which `o1_utils` doesn't ship. Hence this local adapter.
+pub struct SerdeAsCompressedUnchecked;
+
+impl<'de, T> serde_with::DeserializeAs<'de, T> for SerdeAsCompressedUnchecked
+where
+    T: CanonicalDeserialize,
+{
+    fn deserialize_as<D>(deserializer: D) -> Result<T, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = serde_with::Bytes::deserialize_as(deserializer)?;
+        T::deserialize_compressed_unchecked(&bytes[..]).map_err(serde::de::Error::custom)
+    }
+}
+
+/// On-disk shape of `SRS<G>` as `kimchi-stubs`' `srs_write` emits it
+/// (the "prod" path: `g`, `h`, no `lagrange_bases`), with a
+/// compressed-and-unchecked deserializer so we skip the per-point
+/// `is_on_curve` check that `SerdeAs` runs by default.
+///
+/// Sound only for trusted SRS bytes (e.g. a baked, known-good fixture).
+/// On Pallas with cofactor 1, `is_on_curve` is the only meaningful
+/// check — `is_in_correct_subgroup_assuming_on_curve` is a no-op — so
+/// skipping it saves ~5 Fq ops per generator (~65k generators per
+/// SRS), which is real cycle savings inside the SP1 zkVM.
+#[serde_as]
+#[derive(serde::Deserialize)]
+#[serde(bound = "G: CanonicalDeserialize + CanonicalSerialize")]
+pub struct UncheckedSrs<G> {
+    #[serde_as(as = "Vec<SerdeAsCompressedUnchecked>")]
+    pub g: Vec<G>,
+    #[serde_as(as = "SerdeAsCompressedUnchecked")]
+    pub h: G,
+}
+
+impl<G> From<UncheckedSrs<G>> for SRS<G> {
+    fn from(u: UncheckedSrs<G>) -> Self {
+        SRS {
+            g: u.g,
+            h: u.h,
+            lagrange_bases: Default::default(),
+        }
+    }
+}
 
 pub type SpongeParams = PlonkSpongeConstantsKimchi;
 
@@ -71,6 +128,13 @@ where
 
 /// Deserialize a VerifierIndex + SRS from msgpack bytes and reconstruct every
 /// `#[serde(skip)]` field needed for verification. Generic in the curve.
+///
+/// The SRS is read via [`UncheckedSrs`], a local mirror of `SRS<G>`'s
+/// on-disk shape (`g`, `h`) but using `o1_utils::serialization::SerdeAsUnchecked`
+/// so the per-point `is_on_curve` check that `SerdeAs` runs by default
+/// is skipped. Sound only when the SRS bytes come from a trusted source
+/// (a baked, known-good fixture). Saves on the order of ~5 Fq ops ×
+/// 65k generators per call.
 pub fn load_verifier_index_generic<G>(
     vi_bytes: &[u8],
     srs_bytes: &[u8],
@@ -84,8 +148,9 @@ where
 {
     let mut vi: VerifierIndex<FULL_ROUNDS, G, SRS<G>> =
         rmp_serde::from_slice(vi_bytes).expect("failed to deserialize VerifierIndex");
-    let srs: SRS<G> = rmp_serde::from_slice(srs_bytes).expect("failed to deserialize SRS");
-    vi.srs = Arc::new(srs);
+    let unchecked: UncheckedSrs<G> =
+        rmp_serde::from_slice(srs_bytes).expect("failed to deserialize SRS");
+    vi.srs = Arc::new(unchecked.into());
 
     let (_, endo) = G::endos();
     vi.endo = *endo;
