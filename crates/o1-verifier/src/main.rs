@@ -7,7 +7,7 @@
 //!  - `vk_commitments.bin`: 28 single-chunk wrap-VK commitments.
 //!
 //! Runtime stdin (in order):
-//!  1. `proof_repr_msgpack: Vec<u8>` — `ProofReprWire` rmp-encoded.
+//!  1. `proof_repr_msgpack: Vec<u8>` — canonical proof_repr msgpack.
 //!     Hashed via the SHA-256 precompile to produce the
 //!     `statement_digest` we commit; the user-side `o1zkvm hash`
 //!     subcommand reproduces this from their JSON.

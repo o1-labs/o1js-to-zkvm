@@ -7,11 +7,10 @@
 #![cfg(feature = "std")]
 
 use o1_pickles_verifier::messages::{compute_dummy_wrap_sg, WrapVkCommitments};
-use o1_pickles_verifier::parse::{parse_prev_evals, parse_wrap_statement};
+use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_json};
 use o1_pickles_verifier::verify::{
     host_populate_prev_challenges, host_precompute, verify_wrap_proof_precomputed, WrapVerifySetup,
 };
-use o1_pickles_verifier::wire::ProofReprWire;
 use o1_pickles_verifier::Pallas;
 use o1_verifier_lib::{load_pallas_verifier_index, PallasProof};
 use poly_commitment::ipa::SRS;
@@ -29,13 +28,11 @@ const PROOF_REPR_B3: &str = include_str!("../../../fixtures/simple_chain_proof_r
 const WRAP_PROOF_B3: &[u8] = include_bytes!("../../../fixtures/simple_chain_wrap_proof_b3.bin");
 
 fn run_iteration(label: &str, proof_repr_json: &str, wrap_proof_msgpack: &[u8]) {
-    let proof_repr_wire: ProofReprWire =
-        serde_json::from_str(proof_repr_json).expect("failed to deserialize proof repr JSON");
+    let parsed = parse_proof_repr_json(proof_repr_json).expect("parse_proof_repr_json");
+    let stmt = parsed.statement;
+    let prev_evals = parsed.prev_evals;
     let proof_repr_msgpack =
-        rmp_serde::to_vec(&proof_repr_wire).expect("re-encode ProofReprWire as msgpack");
-
-    let stmt = parse_wrap_statement(proof_repr_wire.statement).expect("lower statement");
-    let prev_evals = parse_prev_evals(proof_repr_wire.prev_evals).expect("lower prev_evals");
+        canonical_proof_repr_msgpack(proof_repr_json).expect("canonicalize proof_repr");
 
     let srs: SRS<Pallas> = rmp_serde::from_slice(WRAP_SRS).expect("parse Pallas SRS");
     let dummy_sg = compute_dummy_wrap_sg(&srs);

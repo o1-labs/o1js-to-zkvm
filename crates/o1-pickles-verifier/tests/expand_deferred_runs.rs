@@ -6,9 +6,8 @@
 
 use o1_pickles_verifier::accumulator::accumulator_check;
 use o1_pickles_verifier::messages::STEP_IPA_ROUNDS;
-use o1_pickles_verifier::parse::{parse_prev_evals, parse_wrap_statement};
+use o1_pickles_verifier::parse::parse_proof_repr_json;
 use o1_pickles_verifier::verify::expand_deferred_for_statement;
-use o1_pickles_verifier::wire::ProofReprWire;
 use o1_pickles_verifier::Vesta;
 use poly_commitment::ipa::SRS;
 
@@ -16,10 +15,9 @@ const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b0
 
 #[test]
 fn expand_deferred_runs_on_real_prev_evals() {
-    let repr: ProofReprWire =
-        serde_json::from_str(FIXTURE).expect("failed to deserialize proof repr JSON");
-    let stmt = parse_wrap_statement(repr.statement).expect("lowering statement failed");
-    let parsed_prev = parse_prev_evals(repr.prev_evals).expect("lowering prev_evals failed");
+    let parsed = parse_proof_repr_json(FIXTURE).expect("parse_proof_repr_json");
+    let stmt = parsed.statement;
+    let parsed_prev = parsed.prev_evals;
 
     let expanded = expand_deferred_for_statement(&stmt, &parsed_prev);
     assert_eq!(expanded.new_bulletproof_challenges.len(), STEP_IPA_ROUNDS);

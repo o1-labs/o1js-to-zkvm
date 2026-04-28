@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize, Serializer};
 
 /// The top-level JSON dumped by `Pickles.Proof.Make(MLMB).to_yojson_full`,
 /// with the `app_state` splice applied on the OCaml side. We capture
-/// only `statement` and `prev_evals` — pickles' JSON-encoded inner
+/// only `statement` and `prev_evals`; the JSON's `proof` field is
+/// dropped (serde ignores unknown fields by default) — pickles' JSON
 /// kimchi proof is awkward to round-trip into kimchi's serde format,
 /// so we ship the proof itself separately as a kimchi-native msgpack
 /// blob (see `verify_wrap_proof_precomputed`'s `wrap_proof_bytes`).
@@ -29,8 +30,6 @@ use serde::{Deserialize, Serialize, Serializer};
 pub struct ProofReprWire {
     pub statement: StatementWire,
     pub prev_evals: PrevEvalsWire,
-    #[serde(default, skip)]
-    pub proof: (),
 }
 
 #[derive(Debug, Deserialize, Serialize)]

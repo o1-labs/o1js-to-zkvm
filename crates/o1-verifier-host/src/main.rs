@@ -2,9 +2,8 @@ use std::fs;
 
 use clap::{Parser, Subcommand};
 use o1_pickles_verifier::messages::compute_dummy_wrap_sg;
-use o1_pickles_verifier::parse::{parse_prev_evals, parse_wrap_statement};
+use o1_pickles_verifier::parse::{canonical_proof_repr_msgpack, parse_proof_repr_msgpack};
 use o1_pickles_verifier::verify::{host_populate_prev_challenges, host_precompute, CommitOutput};
-use o1_pickles_verifier::wire::ProofReprWire;
 use o1_pickles_verifier::Pallas;
 use o1_verifier_lib::PallasProof;
 use poly_commitment::ipa::SRS;
@@ -46,12 +45,11 @@ enum Cmd {
     },
 }
 
-fn canonical_proof_repr_msgpack(json_path: &str) -> Vec<u8> {
+fn read_canonical_msgpack(json_path: &str) -> Vec<u8> {
     let proof_repr_json = fs::read_to_string(json_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", json_path));
-    let proof_repr_wire: ProofReprWire = serde_json::from_str(&proof_repr_json)
-        .expect("failed to parse proof_repr JSON into ProofReprWire");
-    rmp_serde::to_vec(&proof_repr_wire).expect("failed to msgpack-encode ProofReprWire")
+    canonical_proof_repr_msgpack(&proof_repr_json)
+        .expect("failed to canonicalize proof_repr JSON as msgpack")
 }
 
 #[tokio::main]
@@ -59,7 +57,7 @@ async fn main() {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Hash { proof_repr } => {
-            let bytes = canonical_proof_repr_msgpack(&proof_repr);
+            let bytes = read_canonical_msgpack(&proof_repr);
             let digest = Sha256::digest(&bytes);
             for b in digest.as_slice() {
                 print!("{:02x}", b);
@@ -75,11 +73,10 @@ async fn main() {
 }
 
 async fn run_verify(proof_repr_path: &str, wrap_proof_path: &str, wrap_srs_path: &str) {
-    let proof_repr_msgpack = canonical_proof_repr_msgpack(proof_repr_path);
-    let proof_repr_wire: ProofReprWire = rmp_serde::from_slice(&proof_repr_msgpack)
-        .expect("rmp-decode canonical proof_repr (just-encoded)");
-    let stmt = parse_wrap_statement(proof_repr_wire.statement).expect("lower statement");
-    let prev_evals = parse_prev_evals(proof_repr_wire.prev_evals).expect("lower prev_evals");
+    let proof_repr_msgpack = read_canonical_msgpack(proof_repr_path);
+    let parsed = parse_proof_repr_msgpack(&proof_repr_msgpack).expect("parse proof_repr");
+    let stmt = parsed.statement;
+    let prev_evals = parsed.prev_evals;
 
     let srs_bytes =
         fs::read(wrap_srs_path).unwrap_or_else(|e| panic!("failed to read {}: {e}", wrap_srs_path));

@@ -59,7 +59,7 @@ Different people use overlapping words for what *is* the proof's "statement". He
 The shape OCaml's `Pickles.Proof.t` natively serializes. Type:
 
 * **OCaml**: `Composition_types.Wrap.Statement.Minimal.t`
-* **Rust wire**: `wire::StatementWire` (`crates/o1-pickles-verifier/src/wire.rs`)
+* **Rust wire**: private (`crates/o1-pickles-verifier/src/parse/wire.rs`)
 * **Rust domain**: `statement::WrapStatement` (`crates/o1-pickles-verifier/src/statement.rs`)
 
 Carries:
@@ -83,7 +83,7 @@ So the chain looks like:
 The polynomial evaluations from the *step* proof underneath the wrap proof — `(at_zeta, at_zeta_omega)` pairs for every kimchi polynomial column, plus `ft_eval1`. Lives next to the statement under `prev_evals` in the proof-repr JSON.
 
 * **OCaml**: `Plonk_types.All_evals.t`
-* **Rust wire**: `wire::PrevEvalsWire`
+* **Rust wire**: private (`crates/o1-pickles-verifier/src/parse/wire.rs`)
 * **Rust domain**: `parse::ParsedPrevEvals`
 
 ### Expanded Statement
@@ -158,12 +158,11 @@ The application circuit's public input (a `Vec<Fp>`). Lives in `messages_for_nex
 Two subcommands:
 
 * **`o1zkvm verify`** — runs the full SP1 attestation:
-  1. Read `proof_repr_bN.json` → `ProofReprWire` (`serde_json`).
-  2. Re-encode to canonical msgpack via `rmp_serde::to_vec`. This *exact* byte string is what the guest hashes for `statement_digest`.
-  3. Lower to domain types and run `host_precompute(stmt, prev_evals)` — that's where `expand_deferred` + `hash_messages_for_next_wrap_proof` actually run, in std-land.
-  4. Populate `wrap_proof.prev_challenges` (mirroring `Wrap_hack.pad_accumulator`) and re-encode the proof bytes.
-  5. Feed three msgpack blobs into the guest via stdin: the canonical proof_repr, the proof with prev_challenges populated, and the precomputed-values blob.
-  6. Read back `CommitOutput`. Sanity-check the digest against a host-side SHA-256 over the same canonical bytes (the guest precompile and the host crate produce the same value for the same input).
+  1. Read `proof_repr_bN.json` and re-encode to canonical msgpack via `parse::canonical_proof_repr_msgpack`. This *exact* byte string is what the guest hashes for `statement_digest`.
+  2. Lower to domain types via `parse::parse_proof_repr_json` and run `host_precompute(stmt, prev_evals)` — that's where `expand_deferred` + `hash_messages_for_next_wrap_proof` actually run, in std-land.
+  3. Populate `wrap_proof.prev_challenges` (mirroring `Wrap_hack.pad_accumulator`) and re-encode the proof bytes.
+  4. Feed three msgpack blobs into the guest via stdin: the canonical proof_repr, the proof with prev_challenges populated, and the precomputed-values blob.
+  5. Read back `CommitOutput`. Sanity-check the digest against a host-side SHA-256 over the same canonical bytes (the guest precompile and the host crate produce the same value for the same input).
 
 * **`o1zkvm hash --proof-repr <PATH>`** — emit `SHA-256(canonical_proof_repr_msgpack)` for a holder of a JSON statement. They compare to the SP1 commitment without re-running anything.
 
@@ -174,7 +173,7 @@ Slim — only the work that *binds `app_state`* into the kimchi public input sta
 1. **Deserialize baked constants.** `vk_commitments` from `OUT_DIR` via `CanonicalDeserialize`. VI/SRS bytes pass straight to the kimchi loader.
 2. **Read runtime inputs** via `io::read_vec()`: `proof_repr_msgpack`, `wrap_proof_bytes` (already with `prev_challenges` populated), `host_precomputed_msgpack`.
 3. **SHA-256 the proof_repr msgpack** via SP1's precompile-patched `sha2::Sha256` → `statement_digest`. (~9.5 cycles per 64-byte block.)
-4. **rmp-decode + lower.** `ProofReprWire` → `WrapStatement` (`parse_wrap_statement`). `prev_evals` is *not* decoded in the guest — `expand_deferred` already ran on the host.
+4. **rmp-decode + lower.** `parse::parse_proof_repr_msgpack` yields a `ParsedProofRepr`; we use only `.statement` since `expand_deferred` already ran on the host.
 5. **Compute `step_messages_digest_fp`.** Poseidon over `app_state` + the baked `vk_commitments` + `step_prev_proofs` from the statement. This is the only Poseidon call in the guest, and the only piece of binding that *can't* move to the host: `app_state` flows through this digest into the kimchi public input.
 6. **Pack.** `assemble_wrap_main_input` combines the host-supplied expanded values + the Poseidon digest we just computed + raw challenges from the statement into the 40-element `Vec<Fq>`.
 7. **kimchi verify.** `kimchi::verifier::verify(group_map, vi, wrap_proof, packed)`. Wrong host-supplied values → kimchi rejects (the wrap circuit re-derives them internally and the equalities fail).

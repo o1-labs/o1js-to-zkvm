@@ -1,9 +1,6 @@
-//! Lower wire-format types (parsed from the OCaml-emitted JSON) into the
-//! domain [`crate::statement::WrapStatement`] shape.
-//!
-//! Pure conversion layer — no file I/O, no JSON parsing. Callers in `std`
-//! land deserialize the JSON into `wire::ProofReprWire` first, then feed its
-//! `statement` field into [`parse_wrap_statement`].
+//! Lower wire-format types into the domain
+//! [`crate::statement::WrapStatement`] shape. Pure conversion — no file
+//! I/O, no JSON parsing.
 
 extern crate alloc;
 
@@ -16,16 +13,16 @@ use ark_ff::PrimeField;
 use kimchi::circuits::lookup::lookups::{LookupFeatures, LookupPatterns};
 use mina_curves::pasta::{Fp, Fq, Pallas, PallasParameters, Vesta, VestaParameters};
 
-use crate::statement::{
-    BranchData, BulletproofChallenge, Challenge, DeferredValues, Digest, FeatureFlags,
-    MessagesForNextStepProof, MessagesForNextWrapProof, PlonkMinimal, ProofState, ProofsVerified,
-    ScalarChallenge, WrapStatement,
-};
-use crate::wire::{
+use super::wire::{
     BranchDataWire, BulletproofChallengeWire, CurvePointWire, DeferredValuesWire, FeatureFlagsWire,
     KimchiEvalsWire, MessagesForNextStepProofWire, MessagesForNextWrapProofWire, PlonkMinimalWire,
     PointEvalsChunkedWire, PrevEvalsWire, ProofStateWire, ProofsVerifiedTag, ScalarChallengeWire,
     StatementWire,
+};
+use crate::statement::{
+    BranchData, BulletproofChallenge, Challenge, DeferredValues, Digest, FeatureFlags,
+    MessagesForNextStepProof, MessagesForNextWrapProof, PlonkMinimal, ProofState, ProofsVerified,
+    ScalarChallenge, WrapStatement,
 };
 
 #[derive(Debug)]
@@ -39,6 +36,8 @@ pub enum ParseError {
     InvalidHexField(String),
     InvalidCurvePoint(String),
     UnsupportedLookupFeature(&'static str),
+    DecodeWire(String),
+    EncodeWire(String),
 }
 
 /// Top-level entry.

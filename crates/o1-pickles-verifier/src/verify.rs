@@ -48,9 +48,8 @@ use crate::messages::{
     WRAP_IPA_ROUNDS,
 };
 use crate::pack::{assemble_wrap_main_input, AssembleInput};
-use crate::parse::{parse_wrap_statement, ParsedPrevEvals};
+use crate::parse::{parse_proof_repr_msgpack, ParsedPrevEvals};
 use crate::statement::{Challenge, ScalarChallenge, WrapStatement};
-use crate::wire::ProofReprWire;
 use crate::{Fp, Fq, Pallas, Vesta};
 
 #[derive(Debug)]
@@ -58,7 +57,6 @@ pub enum VerifyError {
     DecodeProofRepr,
     DecodeWrapProof,
     DecodePrecomputed,
-    LowerStatement,
     KimchiReject,
 }
 
@@ -167,13 +165,14 @@ fn build_prev_challenges(
 /// own blob). [`load_pallas_verifier_index`] stitches them together
 /// into `vi.srs`.
 ///
-/// `proof_repr_msgpack` is the canonical msgpack of [`ProofReprWire`]
-/// (statement + prev_evals); we consume the statement and hash the
-/// bytes for `statement_digest`. `wrap_proof_bytes` is the kimchi
-/// `ProverProof` msgpack — a separate serialization since pickles'
-/// proof_repr JSON carries the kimchi proof in a shape that's awkward
-/// to round-trip directly into kimchi's serde format. The host
-/// populates `prev_challenges` before encoding `wrap_proof_bytes`.
+/// `proof_repr_msgpack` is the canonical msgpack from
+/// `parse::canonical_proof_repr_msgpack` (statement + prev_evals); we
+/// consume the statement and hash the bytes for `statement_digest`.
+/// `wrap_proof_bytes` is the kimchi `ProverProof` msgpack — a separate
+/// serialization since pickles' proof_repr JSON carries the kimchi
+/// proof in a shape that's awkward to round-trip directly into
+/// kimchi's serde format. The host populates `prev_challenges` before
+/// encoding `wrap_proof_bytes`.
 pub fn verify_wrap_proof_precomputed(
     setup: &WrapVerifySetup<'_>,
     wrap_vi_bytes: &[u8],
@@ -184,9 +183,9 @@ pub fn verify_wrap_proof_precomputed(
 ) -> Result<(Vec<Fp>, [u8; 32]), VerifyError> {
     let statement_digest: [u8; 32] = Sha256::digest(proof_repr_msgpack).into();
 
-    let repr: ProofReprWire =
-        rmp_serde::from_slice(proof_repr_msgpack).map_err(|_| VerifyError::DecodeProofRepr)?;
-    let stmt = parse_wrap_statement(repr.statement).map_err(|_| VerifyError::LowerStatement)?;
+    let parsed =
+        parse_proof_repr_msgpack(proof_repr_msgpack).map_err(|_| VerifyError::DecodeProofRepr)?;
+    let stmt = parsed.statement;
 
     let precomp: HostPrecomputed =
         rmp_serde::from_slice(precomputed_msgpack).map_err(|_| VerifyError::DecodePrecomputed)?;

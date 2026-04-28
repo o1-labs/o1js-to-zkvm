@@ -10,6 +10,5 @@ pub mod parse;
 pub mod serde_compat;
 pub mod statement;
 pub mod verify;
-pub mod wire;
 
 pub use mina_curves::pasta::{Fp, Fq, Pallas, Vesta};

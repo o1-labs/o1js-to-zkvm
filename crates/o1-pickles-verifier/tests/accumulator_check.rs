@@ -9,8 +9,7 @@
 use o1_pickles_verifier::accumulator::accumulator_check;
 use o1_pickles_verifier::deferred::endo_expand_scalar;
 use o1_pickles_verifier::messages::STEP_IPA_ROUNDS;
-use o1_pickles_verifier::parse::parse_wrap_statement;
-use o1_pickles_verifier::wire::ProofReprWire;
+use o1_pickles_verifier::parse::parse_proof_repr_json;
 use o1_pickles_verifier::{Fp, Vesta};
 use poly_commitment::ipa::{endos, SRS};
 
@@ -18,9 +17,9 @@ const FIXTURE: &str = include_str!("../../../fixtures/simple_chain_proof_repr_b0
 
 #[test]
 fn stage2_accumulator_matches() {
-    let repr: ProofReprWire =
-        serde_json::from_str(FIXTURE).expect("failed to deserialize proof repr JSON");
-    let stmt = parse_wrap_statement(repr.statement).expect("lowering failed");
+    let stmt = parse_proof_repr_json(FIXTURE)
+        .expect("parse_proof_repr_json")
+        .statement;
 
     let (_endo_q, endo_r) = endos::<Vesta>();
     let chals: Vec<Fp> = stmt
