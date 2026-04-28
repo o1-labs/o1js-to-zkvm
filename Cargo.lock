@@ -702,6 +702,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "o1-pickles-verifier"
+version = "0.1.0"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-poly",
+ "ark-serialize",
+ "blake2",
+ "groupmap",
+ "kimchi",
+ "mina-curves",
+ "mina-poseidon",
+ "o1-verifier-lib",
+ "poly-commitment",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "o1-utils"
 version = "0.4.1"
 dependencies = [

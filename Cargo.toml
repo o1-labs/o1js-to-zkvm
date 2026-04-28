@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/o1-verifier-lib"]
+members = ["crates/o1-pickles-verifier", "crates/o1-verifier-lib"]
 exclude = ["mina"]
 
 [workspace.dependencies]
