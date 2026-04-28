@@ -69,7 +69,14 @@ Carries:
 * the **two messages-for-next-* records** (sg commitments + raw bp prechallenges + app_state)
 * the **sponge_digest_before_evaluations**
 
-What it does *not* carry: the expanded values (`combined_inner_product`, `b`, `perm`, `zeta_to_*`). Those were computed inside the wrap circuit; the minimal form drops them and counts on the verifier to re-derive them.
+What it does *not* carry: the expanded values (`combined_inner_product`, `b`, `perm`, `zeta_to_*`). Important nuance — the *wrap proof itself* was generated against the **expanded** form (kimchi committed to those values as part of the wrap circuit's public input slots), and pickles forwards the expanded values into the next step circuit's witness during recursion. The drop happens only at the external `Pickles.Proof.t` serialization boundary: when OCaml writes a proof to disk via `to_yojson_full`, the minimal form is what lands there, on the (correct) assumption that anyone holding a `Proof.t` and prev_evals can re-derive the expansion deterministically. The verifier here does that re-derivation to reconstruct the kimchi public input.
+
+So the chain looks like:
+
+* **wrap circuit (proving time)** — public input contains *expanded* values; kimchi commits to them.
+* **`Pickles.Proof.t` (serialized form)** — drops expanded values; carries only minimal.
+* **next step circuit (consuming the proof)** — has the expanded values from `Wrap_deferred_values.expand_deferred` as witness, asserts they match the wrap proof's public input.
+* **our verifier (this codebase)** — re-derives expanded values for the same reason as the next step circuit: to reconstruct the kimchi public input.
 
 ### Prev evals
 
@@ -174,14 +181,19 @@ Per-call:
 
 ## Why does the verifier run `expand_deferred`?
 
-The wrap circuit *also* runs the same expansion internally and asserts the result equals what's in its public input. Two independent runs of the same computation, bound by the equality constraint inside the circuit:
+The wrap proof was generated against the *expanded* statement — kimchi already saw those values when it committed to the wrap circuit's public input at proving time. Internally, pickles' next step circuit reads them too: in a chain b0 → b1, the expanded values from b0 enter b1's witness, and b1's step circuit asserts they match what's in b0's wrap-proof public input.
 
-* **Wrap circuit's run** binds the prover honest: "the expanded values you committed to in the public input are derived from the minimal values + evals according to `expand_deferred`."
-* **Verifier's run** is what gives kimchi the public input it needs to check the proof: "I claim the public input is *this 40-element vector*; verify it matches the proof."
+So why does our verifier run the expansion again? Because the *external* `Pickles.Proof.t` form drops them. When OCaml serializes a proof to disk via `Proof.Make.to_yojson_full`, only the minimal statement makes it through. The expansion is deterministic from `(minimal statement, prev_evals)`, so the smaller form is enough for anyone willing to do the work — and pickles consumers (including us) are expected to do exactly that to reconstruct kimchi's public input.
 
-If the verifier supplied wrong expanded values, kimchi would reject — the wrap circuit's internal derivation would differ from the public input we provided. So the redundancy *is* the soundness binding from the verifier's side.
+In other words, three places run the same expansion:
 
-The minimal form is what `Pickles.Proof.t` natively carries (it has to be — for the *next* iteration of the chain, only the minimal form is small enough to forward as part of the recursive statement). The verifier re-derives the expansion. There's no shortcut available without modifying pickles to expose `Wrap_deferred_values.expand_deferred` outside the library.
+1. **Wrap circuit at proving time** — derives the expanded values from witnessed (minimal statement + evals) and binds them into its public input slots, which kimchi commits to.
+2. **Next step circuit when consuming the proof recursively** — re-derives the same values and asserts equality with what's in the wrap proof's public input slots, to prove it knows the statement honestly.
+3. **Our verifier here** — re-derives the same values to reconstruct the kimchi public input the wrap proof was generated against, so we can hand it back to kimchi.
+
+(1) is the prover's side, (2) is what makes pickles recursive, (3) is what makes verification possible from the smaller-on-disk minimal form.
+
+There's no shortcut for (3) without modifying pickles to expose `Wrap_deferred_values.expand_deferred` outside the library — the expanded statement is never serialized externally.
 
 ## Trust boundaries
 
