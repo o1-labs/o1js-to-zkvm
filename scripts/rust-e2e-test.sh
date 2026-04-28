@@ -24,7 +24,7 @@ SIMPLE_CHAIN_FIXTURES_DIR="$FIXTURES_DIR" make build-rust
 echo "==> Verifying b0 and b1 inside SP1 zkVM (mock mode)..."
 for n in 0 1; do
     echo "  -- b${n}"
-    SP1_PROVER=mock target/release/o1zkvm \
+    SP1_PROVER=mock target/release/o1zkvm verify \
         --proof-repr "$FIXTURES_DIR/simple_chain_proof_repr_b${n}.json" \
         --wrap-proof "$FIXTURES_DIR/simple_chain_wrap_proof_b${n}.bin"
 done
