@@ -99,11 +99,29 @@ where
 }
 
 pub fn load_vesta_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> VestaVerifierIndex {
-    load_verifier_index_generic::<Vesta>(vi_bytes, srs_bytes)
+    let mut vi = load_verifier_index_generic::<Vesta>(vi_bytes, srs_bytes);
+    // OCaml's `caml_pasta_fp_plonk_verifier_index_read` (kimchi-stubs
+    // pasta_fp_plonk_verifier_index.rs:183) sets `vi.endo` from
+    // `endos::<Pallas>().0` (Pallas's BaseField cube root in Fp),
+    // NOT from `endos::<Vesta>().1` (Vesta's ScalarField endo, also Fp).
+    // For Pasta these differ when the orientation check picks the squared
+    // cube root. The kimchi verifier expects OCaml's choice.
+    let (pallas_base_endo, _) = poly_commitment::ipa::endos::<Pallas>();
+    vi.endo = pallas_base_endo;
+    vi
 }
 
 pub fn load_pallas_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> PallasVerifierIndex {
-    load_verifier_index_generic::<Pallas>(vi_bytes, srs_bytes)
+    let mut vi = load_verifier_index_generic::<Pallas>(vi_bytes, srs_bytes);
+    // OCaml's `caml_pasta_fq_plonk_verifier_index_read` (kimchi-stubs
+    // pasta_fq_plonk_verifier_index.rs:182) sets `vi.endo` from
+    // `endos::<Vesta>().0` (Vesta's BaseField cube root in Fq),
+    // NOT from `endos::<Pallas>().1` (Pallas's ScalarField endo, also Fq).
+    // For Pasta these differ when the orientation check picks the squared
+    // cube root. The kimchi verifier expects OCaml's choice.
+    let (vesta_base_endo, _) = poly_commitment::ipa::endos::<Vesta>();
+    vi.endo = vesta_base_endo;
+    vi
 }
 
 pub fn verify_vesta_kimchi_proof(
