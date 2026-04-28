@@ -3,25 +3,16 @@ name = "o1-verifier-lib"
 version = "0.1.0"
 edition = "2021"
 
-[features]
-std = ["serde_json", "base64"]
-
 [dependencies]
 kimchi = { workspace = true }
 poly-commitment = { workspace = true }
 mina-curves = { workspace = true }
 mina-poseidon = { workspace = true }
-groupmap = { workspace = true }
 serde = { workspace = true }
-serde_with = { version = "3", default-features = false, features = ["macros"] }
-rmp-serde = { version = "1", default-features = false }
-ark-ec = { version = "0.5", default-features = false }
-ark-ff = { version = "0.5", default-features = false }
-ark-serialize = { version = "0.5", default-features = false }
-
-# std-only deps for circuit JSON parsing
-serde_json = { version = "1", optional = true }
-base64 = { version = "0.13", optional = true }
+serde_with = { workspace = true }
+rmp-serde = { workspace = true }
+ark-ff = { workspace = true }
+ark-serialize = { workspace = true }
 
 [dev-dependencies]
-rmp-serde = "1"
+rmp-serde = { workspace = true }

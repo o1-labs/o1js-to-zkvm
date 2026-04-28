@@ -1,7 +1,6 @@
-//! Wire-format types for the JSON the OCaml `simple_chain.exe` dumps via
-//! `Pickles.Proof.Make(MLMB).to_yojson_full` (with a small splice on the
-//! OCaml side to replace the `null` `app_state` with the real decimal-string
-//! array — see `simple_chain.ml:inject_app_state`).
+//! Wire-format types for the JSON produced by OCaml-side
+//! `Pickles.Proof.Make(MLMB).to_yojson_full`, plus a splice that replaces
+//! pickles' `null` `app_state` with the real decimal-string array.
 //!
 //! Every type here maps directly to the JSON shape pickles' ppx-derived
 //! `to_yojson` emits, so `#[derive(Deserialize)]` parses without custom
@@ -20,10 +19,12 @@ use serde::de::{self, Deserializer};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize, Serializer};
 
-/// The top-level JSON dumped by `Pickles.Proof.Make(Nat.N1).to_yojson_full`,
-/// with the `app_state` splice applied on the OCaml side. We consume
-/// `statement` and `prev_evals`; `proof` (the inner wrap kimchi proof) is
-/// still parsed opaquely until Stage 3 needs it.
+/// The top-level JSON dumped by `Pickles.Proof.Make(MLMB).to_yojson_full`,
+/// with the `app_state` splice applied on the OCaml side. We capture
+/// only `statement` and `prev_evals` — pickles' JSON-encoded inner
+/// kimchi proof is awkward to round-trip into kimchi's serde format,
+/// so we ship the proof itself separately as a kimchi-native msgpack
+/// blob (see `verify_wrap_proof_precomputed`'s `wrap_proof_bytes`).
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ProofReprWire {
     pub statement: StatementWire,
@@ -203,8 +204,8 @@ pub struct MessagesForNextStepProofWire {
 // evaluation" becomes a 2-tuple `(at_zeta, at_zetaw)`:
 //
 //   * `public_input : ('f * 'f)`           → [String; 2]   (hex strings, 1 F each)
-//   * every polynomial in `evals`: chunks  → [Vec<String>; 2]  (1 chunk/point for
-//                                             Simple_chain, so inner len = 1)
+//   * every polynomial in `evals`: chunks  → [Vec<String>; 2]  (1 chunk/point
+//                                             when single-chunk, inner len = 1)
 //
 // Optional gates / lookups are emitted as JSON `null` when absent.
 
@@ -227,9 +228,9 @@ pub struct EvalsWithPublicInputWire {
 }
 
 /// One polynomial's `(zeta, zeta_omega)` evaluations — each side is an
-/// array of chunk evaluations. Simple_chain is single-chunk, so the inner
-/// `Vec<String>` always has length 1; keeping it variable-length tracks
-/// the OCaml shape exactly.
+/// array of chunk evaluations. The inner `Vec<String>` has length 1 in
+/// the single-chunk case; keeping it variable-length tracks the OCaml
+/// shape exactly.
 pub type PointEvalsChunkedWire = [Vec<String>; 2];
 
 /// Direct mirror of kimchi's `ProofEvaluations` shape as pickles emits it.

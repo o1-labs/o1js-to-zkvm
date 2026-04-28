@@ -1,20 +1,7 @@
 //! Pickles deferred-values expansion + run-checks.
 //!
 //! Mirror of OCaml `Wrap_deferred_values.expand_deferred` + `run_checks`
-//! (mina/src/lib/crypto/pickles/wrap_deferred_values.ml), leaning on
-//! proof-systems primitives for the heavy lifting. Cross-referenced against
-//! the cleaner PureScript port at
-//! `l-adic/snarky/packages/pickles/src/Pickles/Prove/Pure/{Common,Verify}.purs`.
-//!
-//! This module grows top-down:
-//! 1. Pure algebraic helpers (`actual_evaluation`, `endo_expand`,
-//!    `compute_bp_chals_and_b`).
-//! 2. Bigger derivations (`derive_plonk`, `ft_eval0`,
-//!    `combined_inner_product`) — port of `Plonk_checks.derive_plonk` and
-//!    `Plonk_checks.ft_eval0` from pickles.
-//! 3. Orchestrator (`expand_deferred`) + assertions (`run_checks`).
-//!
-//! Only (1) is implemented for now.
+//! (mina/src/lib/crypto/pickles/wrap_deferred_values.ml).
 
 extern crate alloc;
 
@@ -26,8 +13,6 @@ use poly_commitment::commitment::b_poly;
 
 use crate::statement::{BulletproofChallenge, Challenge, ScalarChallenge};
 
-// ---- pure algebraic helpers ----------------------------------------------
-
 /// Horner-fold-combine a chunked evaluation `evals` at a point `pt`, with
 /// chunk base `pt^(2^rounds)`:
 ///
@@ -35,10 +20,9 @@ use crate::statement::{BulletproofChallenge, Challenge, ScalarChallenge};
 /// evals[0] + pt_N * evals[1] + pt_N^2 * evals[2] + ... + pt_N^(n-1) * evals[n-1]
 /// ```
 ///
-/// Mirrors OCaml's `Plonk_checks.actual_evaluation` (plonk_checks.ml:90-100)
-/// and PS's `actualEvaluation` in `Prove/Pure/Common.purs:90`. Returns zero
-/// for an empty input.
-pub fn actual_evaluation<F: Field>(rounds: u32, pt: F, evals: &[F]) -> F {
+/// Mirrors OCaml's `Plonk_checks.actual_evaluation` (plonk_checks.ml:90-100).
+/// Returns zero for an empty input.
+pub fn horner_fold<F: Field>(rounds: u32, pt: F, evals: &[F]) -> F {
     let pt_n = pow2_pow(rounds, pt);
     evals.iter().rev().fold(F::zero(), |acc, &e| e + pt_n * acc)
 }
@@ -52,21 +36,11 @@ fn pow2_pow<F: Field>(n: u32, mut x: F) -> F {
     x
 }
 
-/// Endo-expand a 128-bit challenge into a field element `f` such that
-/// `[f]P = [challenge]P` under the curve's endomorphism, matching
-/// `Snarky.Circuit.Kimchi.EndoScalar.toFieldPure` (PS) / OCaml's
-/// `Scalar_challenge.to_field`.
-///
-/// Thin wrapper around `mina_poseidon::sponge::ScalarChallenge::to_field`
-/// — converts our `Challenge([u64; 2])` into the form the proof-systems
-/// sponge layer already knows how to handle.
-pub fn endo_expand<F: PrimeField>(c: &Challenge, endo: &F) -> F {
-    PoseidonScalarChallenge::<F>::from_limbs(c.0).to_field(endo)
-}
-
-/// Same for `ScalarChallenge` (which is just a wrapper around `Challenge`).
+/// Endo-expand a 128-bit `ScalarChallenge` into a field element `f`
+/// such that `[f]P = [challenge]P` under the curve's endomorphism.
+/// Matches OCaml's `Scalar_challenge.to_field`.
 pub fn endo_expand_scalar<F: PrimeField>(c: &ScalarChallenge, endo: &F) -> F {
-    endo_expand(&c.inner, endo)
+    PoseidonScalarChallenge::<F>::from_limbs(c.inner.0).to_field(endo)
 }
 
 /// Output of [`compute_bp_chals_and_b`].
@@ -77,7 +51,7 @@ pub struct BpChalsAndB<F> {
     pub b: F,
 }
 
-/// Port of OCaml `step.ml:359-379` / PS `Prove/Pure/Common.computeBpChalsAndB`.
+/// Port of OCaml `step.ml:359-379`.
 ///
 /// Given raw 128-bit IPA prechallenges, the curve endo coefficient, and a
 /// pair of evaluation points `(zeta, zetaw)` together with the batching
@@ -102,8 +76,6 @@ pub fn compute_bp_chals_and_b<F: PrimeField>(
     BpChalsAndB { chals, b }
 }
 
-// ---- derive_plonk --------------------------------------------------------
-
 /// Endo-expanded form of [`PlonkMinimal`]'s scalar challenges. `beta` and
 /// `gamma` are carried in their raw 128-bit form by pickles but usually
 /// converted to field elements at the call site; we expose both here.
@@ -115,7 +87,7 @@ pub struct ExpandedPlonkChallenges<F> {
 }
 
 /// Endo-expand [`PlonkMinimal`]'s challenges into field elements. OCaml
-/// `Plonk_checks.expand_minimal` / PS inline in `derivePlonk`.
+/// `Plonk_checks.expand_minimal`.
 ///
 /// Mirrors pickles' convention: `alpha`/`zeta` go through the scalar-challenge
 /// endo (128-bit → full field), `beta`/`gamma` are the plain `Challenge`
@@ -164,12 +136,17 @@ pub struct PermutationInput<F> {
     pub zeta: F,
 }
 
-/// Offset of alpha powers for the permutation argument.
-/// Matches `kimchi/src/index.rs` / PS `Pickles.PlonkChecks.Permutation.permAlpha0`.
+/// Offset where `ArgumentType::Permutation` registers in the kimchi
+/// `Alphas` table — the power of `alpha` the permutation argument
+/// uses. Kimchi assigns offsets dynamically (see
+/// `kimchi/src/linearization.rs`), but for the standard gate set with
+/// no optional gates it lands at 21. To avoid duplicating it here we
+/// could call `Alphas::register` in the same order kimchi does and
+/// read back `get_alphas(ArgumentType::Permutation, ...)`, but the
+/// constant is fixed for our wrap circuit so we hard-code it.
 pub const PERM_ALPHA_0: u64 = 21;
 
-/// Port of PS `Pickles.PlonkChecks.Permutation.permScalar`
-/// / OCaml `Plonk_checks.derive_plonk` permutation block.
+/// Port of OCaml `Plonk_checks.derive_plonk` permutation block.
 ///
 /// ```text
 /// perm = -(z(zeta·omega) · beta · alpha^21 · zk_polynomial
@@ -189,8 +166,7 @@ pub fn perm_scalar<F: PrimeField>(input: &PermutationInput<F>) -> F {
     -product
 }
 
-/// Port of PS `Pickles.PlonkChecks.Permutation.permContribution`
-/// / OCaml `Plonk_checks.ft_eval0` permutation block.
+/// Port of OCaml `Plonk_checks.ft_eval0` permutation block.
 ///
 /// Returns `term1 - term2 + boundary`:
 /// - `term1 = (w_6 + gamma) · z(zeta·omega) · alpha^21 · zk_poly
@@ -244,8 +220,6 @@ pub fn perm_contribution<F: PrimeField>(input: &PermutationInput<F>) -> F {
     term1 - term2 + boundary
 }
 
-// ---- combined_inner_product ---------------------------------------------
-
 /// Input to [`combined_inner_product`].
 pub struct CombinedInnerProductInput<'a, F> {
     /// The step proof's polynomial evaluations (pulled out of the wrap
@@ -254,7 +228,7 @@ pub struct CombinedInnerProductInput<'a, F> {
     pub evaluations: &'a kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<F>>,
     /// Public-input polynomial evaluations at `(zeta, zeta·omega)`. Pickles
     /// computes these by Horner-folding the public-input chunks
-    /// (see [`actual_evaluation`]) rather than pulling from
+    /// (see [`horner_fold`]) rather than pulling from
     /// `evaluations.public`, so we take them as a separate input.
     pub public_evals: &'a kimchi::proof::PointEvaluations<F>,
     /// ft-polynomial evaluation at `zeta·omega`, carried on the proof itself
@@ -275,7 +249,7 @@ pub struct CombinedInnerProductInput<'a, F> {
 
 /// Port of OCaml's pickles `combined_inner_product` helper
 /// (wrap.ml:22-62 for the step-field side, step.ml:464-496 for the
-/// wrap-field side), via PS `Prove/Pure/Common.combinedInnerProductBatch`.
+/// wrap-field side).
 ///
 /// Batches evaluations in the order pickles fixes:
 /// `b_polys (n), public_input, ft, z, index (6), witness (15),
@@ -285,8 +259,8 @@ pub struct CombinedInnerProductInput<'a, F> {
 ///
 /// The six `index` selectors appear in pickles' fixed order:
 /// `generic, poseidon, complete_add, mul, emul, endomul_scalar`.
-/// Optional gate/lookup selectors are not included — Simple_chain (and
-/// pickles wrap circuits in general) don't use them.
+/// Optional gate/lookup selectors are not included — pickles wrap
+/// circuits don't use them.
 pub fn combined_inner_product<F: PrimeField>(input: CombinedInnerProductInput<'_, F>) -> F {
     use kimchi::proof::PointEvaluations;
 
@@ -362,8 +336,7 @@ pub struct DerivedPlonk<F> {
     pub zeta_to_srs_length: crate::statement::ShiftedValue<F>,
 }
 
-/// Port of OCaml `Plonk_checks.derive_plonk` (plonk_checks.ml:403-441)
-/// / PS `Prove/Pure/Common.derivePlonk`.
+/// Port of OCaml `Plonk_checks.derive_plonk` (plonk_checks.ml:403-441).
 ///
 /// Given minimal challenges + field evaluations from the proof, produces
 /// the full set of plonk scalars the wrap-circuit public input commits to.
@@ -410,8 +383,6 @@ pub fn derive_plonk<F: PrimeField>(input: DerivePlonkInput<'_, F>) -> DerivedPlo
     }
 }
 
-// ---- ft_eval0 ------------------------------------------------------------
-
 /// Evaluate the linearization polynomial's constant term at `zeta` via
 /// kimchi's Polish-token interpreter.
 ///
@@ -445,7 +416,7 @@ pub struct FtEval0Input<'a, F: ark_ff::FftField> {
     /// step proof's polynomial evaluations at `(zeta, zeta·omega)`.
     pub evaluations: &'a kimchi::proof::ProofEvaluations<kimchi::proof::PointEvaluations<F>>,
     /// Chunked evaluations of the public-input polynomial at zeta;
-    /// folded via [`actual_evaluation`].
+    /// folded via [`horner_fold`].
     pub public_input_chunks: &'a [F],
     /// Permutation shift constants (7 values).
     pub shifts: [F; 7],
@@ -463,8 +434,7 @@ pub struct FtEval0Input<'a, F: ark_ff::FftField> {
     pub endo: F,
     /// `endo_coefficient` constant for the linearization Constants record
     /// (Pallas base endo, ξ_Pallas in Fp). DIFFERENT from `endo` above —
-    /// see PS `Snarky/Types/Shifted.purs` and OCaml
-    /// `Endo.Step_inner_curve.base`.
+    /// see OCaml `Endo.Step_inner_curve.base`.
     pub linearization_endo_coefficient: F,
     /// Linearization-polynomial constant-term token stream, from
     /// `kimchi::linearization::expr_linearization`.
@@ -479,13 +449,12 @@ pub struct FtEval0Input<'a, F: ark_ff::FftField> {
     pub mds: &'static [[F; 3]; 3],
 }
 
-/// Port of OCaml `Plonk_checks.ft_eval0` (plonk_checks.ml:350-400)
-/// / PS `Prove/Pure/Common.ftEval0`.
+/// Port of OCaml `Plonk_checks.ft_eval0` (plonk_checks.ml:350-400).
 ///
 /// Returns `perm_contribution - p_eval0_folded - constant_term`, where:
 /// - `perm_contribution` mirrors [`perm_contribution`] on the witness /
 ///   sigma / z-polynomial evaluations pulled out of `evaluations`.
-/// - `p_eval0_folded = actual_evaluation(srs_length_log2, zeta, public_input_chunks)`.
+/// - `p_eval0_folded = horner_fold(srs_length_log2, zeta, public_input_chunks)`.
 /// - `constant_term` is the linearization polynomial's constant term at
 ///   zeta, via [`evaluate_linearization_constant_term`].
 pub fn ft_eval0<F: ark_ff::FftField + PrimeField>(
@@ -501,7 +470,7 @@ pub fn ft_eval0<F: ark_ff::FftField + PrimeField>(
         * (expanded.zeta - omega_to_minus_zk_rows);
     let zeta_to_n_minus_1 = expanded.zeta.pow([1u64 << input.domain_log2]) - F::one();
 
-    let p_eval0_folded = actual_evaluation(
+    let p_eval0_folded = horner_fold(
         input.srs_length_log2,
         expanded.zeta,
         input.public_input_chunks,
@@ -560,10 +529,7 @@ pub fn ft_eval0<F: ark_ff::FftField + PrimeField>(
     Ok(perm - p_eval0_folded - constant_term)
 }
 
-// ---- expand_deferred -----------------------------------------------------
-
-/// Sponge round count used by pasta curves in pickles.
-pub const FULL_ROUNDS: usize = 55;
+pub use mina_poseidon::pasta::FULL_ROUNDS;
 
 /// Alias for the kimchi-constants sponge params over field `F`.
 pub type SpongeParams<F> = mina_poseidon::poseidon::ArithmeticSpongeParams<F, FULL_ROUNDS>;
@@ -582,8 +548,7 @@ type ArithmeticSpongeKimchi<F> = mina_poseidon::poseidon::ArithmeticSponge<
 
 /// Input to [`expand_deferred`].
 ///
-/// Splits into three groups mirroring the PS port
-/// (`Pickles.Prove.Pure.Verify.ExpandDeferredInput`):
+/// Splits into three groups:
 ///
 /// 1. **Carried minimal statement fields** (`plonk_minimal`,
 ///    `bulletproof_challenges`, `sponge_digest_before_evaluations`) — pulled
@@ -682,8 +647,7 @@ fn challenges_digest<F: PrimeField>(
 }
 
 /// Port of OCaml `Wrap_deferred_values.expand_deferred`
-/// (`mina/src/lib/crypto/pickles/wrap_deferred_values.ml:17-193`), via PS
-/// `Pickles.Prove.Pure.Verify.expandDeferredForVerify`.
+/// (`mina/src/lib/crypto/pickles/wrap_deferred_values.ml:17-193`).
 ///
 /// Replays the Fiat–Shamir sponge from the carried
 /// `sponge_digest_before_evaluations` checkpoint to recover `xi` and `r`,
@@ -717,8 +681,8 @@ pub fn expand_deferred<F: ark_ff::FftField + PrimeField>(
 
     let pe = input.evaluations;
     // Absorption order matches kimchi's `FrSponge::absorb_evaluations`
-    // (plonk_sponge.rs:55) and PS `absorbPointEval` loop: z, 6 selectors,
-    // 15 witness, 15 coefficients, 6 sigma. Each point: zeta then zeta_omega.
+    // (plonk_sponge.rs:55): z, 6 selectors, 15 witness, 15 coefficients,
+    // 6 sigma. Each point: zeta then zeta_omega.
     let ordered: [&kimchi::proof::PointEvaluations<F>; 7] = [
         &pe.z,
         &pe.generic_selector,
@@ -823,38 +787,33 @@ pub fn expand_deferred<F: ark_ff::FftField + PrimeField>(
     })
 }
 
-// ---- tests ---------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec;
-    use ark_ff::{One, Zero};
+    use ark_ff::Zero;
     use mina_curves::pasta::Fp;
 
-    use crate::statement::{BulletproofChallenge, Challenge, ScalarChallenge};
-
     #[test]
-    fn actual_evaluation_empty_is_zero() {
+    fn horner_fold_empty_is_zero() {
         let pt = Fp::from(7u64);
-        assert_eq!(actual_evaluation(3, pt, &[]), Fp::zero());
+        assert_eq!(horner_fold(3, pt, &[]), Fp::zero());
     }
 
     #[test]
-    fn actual_evaluation_single_chunk_is_that_chunk() {
+    fn horner_fold_single_chunk_is_that_chunk() {
         let pt = Fp::from(7u64);
         let e = Fp::from(42u64);
         // With one chunk, the fold reduces to `e + pt_n * 0 = e`.
-        assert_eq!(actual_evaluation(3, pt, &[e]), e);
+        assert_eq!(horner_fold(3, pt, &[e]), e);
     }
 
     #[test]
-    fn actual_evaluation_horner_matches_definition() {
+    fn horner_fold_horner_matches_definition() {
         // pt_n = 2^(2^0) = 2, chunks = [3, 5, 7]
         // expected: 3 + 2*5 + 4*7 = 3 + 10 + 28 = 41
         let pt = Fp::from(2u64);
         let chunks = [Fp::from(3u64), Fp::from(5u64), Fp::from(7u64)];
-        assert_eq!(actual_evaluation(0, pt, &chunks), Fp::from(41u64));
+        assert_eq!(horner_fold(0, pt, &chunks), Fp::from(41u64));
     }
 
     #[test]
@@ -865,288 +824,5 @@ mod tests {
         assert_eq!(pow2_pow(1, x), Fp::from(9u64));
         assert_eq!(pow2_pow(2, x), Fp::from(81u64));
         assert_eq!(pow2_pow(3, x), Fp::from(6561u64));
-    }
-
-    /// `perm_scalar` on synthetic inputs, computed by hand against the
-    /// formula documented in the function's doc.
-    #[test]
-    fn perm_scalar_matches_hand_computation() {
-        let alpha = Fp::from(2u64);
-        let beta = Fp::from(3u64);
-        let gamma = Fp::from(5u64);
-        let zk_polynomial = Fp::from(7u64);
-        let z_omega_times_zeta = Fp::from(11u64);
-        let w = [Fp::from(13u64); 7];
-        let sigma = [Fp::from(17u64); 6];
-        let shifts = [Fp::zero(); 7];
-
-        let input = PermutationInput {
-            w,
-            sigma,
-            z_zeta: Fp::zero(),
-            z_omega_times_zeta,
-            shifts,
-            alpha,
-            beta,
-            gamma,
-            zk_polynomial,
-            zeta_to_n_minus_1: Fp::zero(),
-            omega_to_minus_zk_rows: Fp::zero(),
-            zeta: Fp::zero(),
-        };
-
-        // init = 11 * 3 * 2^21 * 7
-        // fold: acc_{i+1} = acc_i * (5 + 3*17 + 13) = acc_i * 69  (6 times)
-        // perm = -(init * 69^6)
-        let alpha_pow_21 = alpha.pow([PERM_ALPHA_0]);
-        let init = z_omega_times_zeta * beta * alpha_pow_21 * zk_polynomial;
-        let factor = gamma + beta * sigma[0] + w[0]; // 69
-        let expected = -(init * factor.pow([6u64]));
-
-        assert_eq!(perm_scalar(&input), expected);
-    }
-
-    /// Wiring test for `derive_plonk`: confirms it runs to completion and
-    /// carries the challenges forward unchanged, with the derived scalars
-    /// structurally present. Full algebraic correctness is verified by a
-    /// later golden-value test against OCaml/PS output.
-    #[test]
-    fn derive_plonk_carries_challenges_and_runs_end_to_end() {
-        use crate::statement::{FeatureFlags, PlonkMinimal};
-        use kimchi::circuits::lookup::lookups::{LookupFeatures, LookupPatterns};
-
-        let plonk_minimal = PlonkMinimal {
-            alpha: ScalarChallenge {
-                inner: Challenge([1, 2]),
-            },
-            beta: Challenge([3, 4]),
-            gamma: Challenge([5, 6]),
-            zeta: ScalarChallenge {
-                inner: Challenge([7, 8]),
-            },
-            joint_combiner: None,
-            feature_flags: FeatureFlags {
-                range_check0: false,
-                range_check1: false,
-                foreign_field_add: false,
-                foreign_field_mul: false,
-                xor: false,
-                rot: false,
-                lookup_features: LookupFeatures {
-                    patterns: LookupPatterns {
-                        xor: false,
-                        lookup: false,
-                        range_check: false,
-                        foreign_field_mul: false,
-                    },
-                    joint_lookup_used: false,
-                    uses_runtime_tables: false,
-                },
-            },
-        };
-
-        let derived = derive_plonk(DerivePlonkInput::<Fp> {
-            plonk_minimal: &plonk_minimal,
-            w: [Fp::from(1u64); 7],
-            sigma: [Fp::from(2u64); 6],
-            z_zeta: Fp::from(3u64),
-            z_omega_times_zeta: Fp::from(4u64),
-            shifts: [Fp::from(5u64); 7],
-            generator: Fp::from(9u64),
-            domain_log2: 14,
-            zk_rows: 3,
-            srs_length_log2: 16,
-            endo: Fp::from(11u64),
-        });
-
-        // Challenges carried forward unchanged.
-        assert_eq!(derived.alpha.inner.0, plonk_minimal.alpha.inner.0);
-        assert_eq!(derived.beta.0, plonk_minimal.beta.0);
-        assert_eq!(derived.gamma.0, plonk_minimal.gamma.0);
-        assert_eq!(derived.zeta.inner.0, plonk_minimal.zeta.inner.0);
-    }
-
-    /// `perm_contribution` on synthetic inputs, computed by hand.
-    #[test]
-    fn perm_contribution_matches_hand_computation() {
-        // Pick values that make the denominator non-zero and keep the math
-        // tractable.
-        let alpha = Fp::from(2u64);
-        let beta = Fp::from(3u64);
-        let gamma = Fp::from(5u64);
-        let zeta = Fp::from(11u64);
-        let zk_polynomial = Fp::from(7u64);
-        let zeta_to_n_minus_1 = Fp::from(13u64);
-        let omega_to_minus_zk_rows = Fp::from(19u64);
-        let z_zeta = Fp::from(23u64);
-        let z_omega_times_zeta = Fp::from(29u64);
-        let w = [Fp::from(31u64); 7];
-        let sigma = [Fp::from(37u64); 6];
-        let shifts = [Fp::from(41u64); 7];
-
-        let input = PermutationInput {
-            w,
-            sigma,
-            z_zeta,
-            z_omega_times_zeta,
-            shifts,
-            alpha,
-            beta,
-            gamma,
-            zk_polynomial,
-            zeta_to_n_minus_1,
-            omega_to_minus_zk_rows,
-            zeta,
-        };
-
-        // Hand computation mirroring perm_contribution exactly.
-        let a21 = alpha.pow([PERM_ALPHA_0]);
-        let a22 = a21 * alpha;
-        let a23 = a22 * alpha;
-        let term1_init = (w[6] + gamma) * z_omega_times_zeta * a21 * zk_polynomial;
-        let f1 = beta * sigma[0] + w[0] + gamma;
-        let term1 = term1_init * f1.pow([6u64]);
-        let term2_init = a21 * zk_polynomial * z_zeta;
-        let f2 = gamma + beta * zeta * shifts[0] + w[0];
-        let term2 = term2_init * f2.pow([7u64]);
-        let zmomega = zeta - omega_to_minus_zk_rows;
-        let zm1 = zeta - Fp::one();
-        let numerator = (zeta_to_n_minus_1 * a22 * zmomega + zeta_to_n_minus_1 * a23 * zm1)
-            * (Fp::one() - z_zeta);
-        let denominator = zmomega * zm1;
-        let boundary = numerator / denominator;
-        let expected = term1 - term2 + boundary;
-
-        assert_eq!(perm_contribution(&input), expected);
-    }
-
-    /// Wiring test for `combined_inner_product`: confirms the batching
-    /// order + Horner fold match a hand computation on a minimal synthetic
-    /// case (single prev-proof bp challenge vector).
-    #[test]
-    fn combined_inner_product_batches_in_pickles_order() {
-        use kimchi::proof::{PointEvaluations, ProofEvaluations};
-
-        let pe = |z: u32, w: u32| PointEvaluations {
-            zeta: Fp::from(z as u64),
-            zeta_omega: Fp::from(w as u64),
-        };
-
-        // Build a ProofEvaluations with distinct synthetic values in each
-        // slot so an ordering bug would show up as a mismatch.
-        let evaluations = ProofEvaluations::<PointEvaluations<Fp>> {
-            public: Some(pe(1, 2)),
-            z: pe(3, 4),
-            generic_selector: pe(5, 6),
-            poseidon_selector: pe(7, 8),
-            complete_add_selector: pe(9, 10),
-            mul_selector: pe(11, 12),
-            emul_selector: pe(13, 14),
-            endomul_scalar_selector: pe(15, 16),
-            w: core::array::from_fn(|i| pe((17 + i) as u32, (100 + i) as u32)),
-            coefficients: core::array::from_fn(|i| pe((200 + i) as u32, (300 + i) as u32)),
-            s: core::array::from_fn(|i| pe((400 + i) as u32, (500 + i) as u32)),
-            range_check0_selector: None,
-            range_check1_selector: None,
-            foreign_field_add_selector: None,
-            foreign_field_mul_selector: None,
-            xor_selector: None,
-            rot_selector: None,
-            lookup_aggregation: None,
-            lookup_table: None,
-            lookup_sorted: core::array::from_fn(|_| None),
-            runtime_lookup_table: None,
-            runtime_lookup_table_selector: None,
-            xor_lookup_selector: None,
-            lookup_gate_lookup_selector: None,
-            range_check_lookup_selector: None,
-            foreign_field_mul_lookup_selector: None,
-        };
-        let public_evals = pe(1, 2);
-        let ft_eval1 = Fp::from(100u64);
-
-        let old_bpc = vec![vec![Fp::from(1u64); 16]];
-        let xi = Fp::from(2u64);
-        let r = Fp::from(3u64);
-        let zeta = Fp::from(5u64);
-        let zetaw = Fp::from(7u64);
-        let ft_eval0 = Fp::from(99u64);
-
-        let got = combined_inner_product(CombinedInnerProductInput {
-            evaluations: &evaluations,
-            public_evals: &public_evals,
-            ft_eval1,
-            ft_eval0,
-            old_bulletproof_challenges: &old_bpc,
-            xi,
-            r,
-            zeta,
-            zetaw,
-        });
-
-        // Hand computation: fold in pickles order with
-        //   term = e.zeta + r * e.zeta_omega
-        // scale starts at 1 and multiplies by xi each step.
-        let b_at_zeta = b_poly(&old_bpc[0], zeta);
-        let b_at_zetaw = b_poly(&old_bpc[0], zetaw);
-        let mut ordered: Vec<(Fp, Fp)> = vec![(b_at_zeta, b_at_zetaw)];
-        ordered.push((public_evals.zeta, public_evals.zeta_omega));
-        ordered.push((ft_eval0, ft_eval1));
-        ordered.push((evaluations.z.zeta, evaluations.z.zeta_omega));
-        for s in [
-            &evaluations.generic_selector,
-            &evaluations.poseidon_selector,
-            &evaluations.complete_add_selector,
-            &evaluations.mul_selector,
-            &evaluations.emul_selector,
-            &evaluations.endomul_scalar_selector,
-        ] {
-            ordered.push((s.zeta, s.zeta_omega));
-        }
-        for w in &evaluations.w {
-            ordered.push((w.zeta, w.zeta_omega));
-        }
-        for c in &evaluations.coefficients {
-            ordered.push((c.zeta, c.zeta_omega));
-        }
-        for s in &evaluations.s {
-            ordered.push((s.zeta, s.zeta_omega));
-        }
-        let (expected, _) = ordered
-            .iter()
-            .fold((Fp::zero(), Fp::one()), |(res, scale), (z, wz)| {
-                (res + scale * (*z + r * wz), scale * xi)
-            });
-
-        assert_eq!(got, expected);
-    }
-
-    /// Exercises the endo-expansion + `b_poly` plumbing end-to-end with
-    /// structurally-valid inputs. We're not testing `compute_bp_chals_and_b`'s
-    /// algebraic correctness here — that comes from `b_poly`'s own test
-    /// suite in proof-systems and from an eventual golden-value test
-    /// against OCaml pickles. This is a wiring sanity check.
-    #[test]
-    fn compute_bp_chals_and_b_runs_end_to_end() {
-        let raw: Vec<BulletproofChallenge> = (0..16)
-            .map(|i| BulletproofChallenge {
-                prechallenge: ScalarChallenge {
-                    inner: Challenge([i as u64, (i + 1) as u64]),
-                },
-            })
-            .collect();
-        // The endo coefficient for Fp (Pallas scalar field). Using a
-        // placeholder value here is fine for a wiring test — correctness
-        // requires the actual endo from the curve, which `mina_poseidon`
-        // exposes elsewhere; we'll thread it through from the verifier
-        // once `expand_deferred` is wired up.
-        let endo = Fp::from(5u64);
-        let zeta = Fp::from(11u64);
-        let zetaw = Fp::from(13u64);
-        let r = Fp::from(17u64);
-        let out = compute_bp_chals_and_b::<Fp>(&raw, &endo, zeta, zetaw, r);
-        assert_eq!(out.chals.len(), 16);
-        // b_poly evaluates to a nonzero element for these inputs.
-        assert_ne!(out.b, Fp::zero());
     }
 }

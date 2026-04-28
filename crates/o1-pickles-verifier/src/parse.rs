@@ -275,9 +275,9 @@ pub fn parse_prev_evals(w: PrevEvalsWire) -> Result<ParsedPrevEvals, ParseError>
 }
 
 /// Collapse a chunked point-evaluation pair `[[zeta_chunks], [zetaw_chunks]]`
-/// into a single `PointEvaluations<F>`. Pickles' wire format is
-/// single-chunk for Simple_chain (`max_poly_size == domain_size`), so each
-/// inner `Vec<String>` must have length exactly 1.
+/// into a single `PointEvaluations<F>`. Single-chunk when
+/// `max_poly_size == domain_size`, so each inner `Vec<String>` must have
+/// length exactly 1.
 fn parse_point_evals_single_chunk(
     field: &'static str,
     w: &PointEvalsChunkedWire,

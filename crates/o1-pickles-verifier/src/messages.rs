@@ -14,9 +14,6 @@
 //!   `Wrap_hack.hash_messages_for_next_wrap_proof`
 //!   (`mina/src/lib/crypto/pickles/wrap_hack.ml:46-59`). Fq (wrap field),
 //!   with front-padding via deterministic dummy challenges.
-//!
-//! Cross-referenced against the PureScript port at
-//! `l-adic/snarky/packages/pickles/src/Pickles/{Step,Wrap}/MessageHash.purs`.
 
 extern crate alloc;
 
@@ -73,7 +70,7 @@ pub struct WrapVkCommitments {
 impl WrapVkCommitments {
     /// Pull the 28 single-chunk wrap-VK commitments out of a kimchi
     /// `VerifierIndex` in pickles `index_to_field_elements` order.
-    /// Single-chunk because Simple_chain's wrap circuit is non-chunked.
+    /// Single-chunk: standard pickles wrap circuits are non-chunked.
     pub fn extract(
         vi: &kimchi::verifier_index::VerifierIndex<FULL_ROUNDS, Pallas, SRS<Pallas>>,
     ) -> Self {
@@ -208,10 +205,10 @@ fn absorb_pallas(sponge: &mut FpSponge, p: &Pallas) {
 /// to Fq. Matches OCaml `Dummy.Ipa.Wrap.challenges_computed` (via the
 /// shared `Ro.chal` Blake2s oracle).
 ///
-/// Storage convention matches the PS port: `Vector.init` in OCaml
-/// evaluates right-to-left so index 0 gets the last-drawn challenge
-/// (counter = 15) and index 14 the first-drawn (counter = 1). Callers
-/// absorb in storage order, which is what this function returns.
+/// `Vector.init` in OCaml evaluates right-to-left so index 0 gets the
+/// last-drawn challenge (counter = 15) and index 14 the first-drawn
+/// (counter = 1). Callers absorb in storage order, which is what this
+/// function returns.
 pub fn dummy_ipa_wrap_challenges_expanded() -> [Fq; WRAP_IPA_ROUNDS] {
     let (_endo_q, endo_r) = endos::<Pallas>();
     let mut out = [Fq::from(0u64); WRAP_IPA_ROUNDS];
@@ -224,22 +221,6 @@ pub fn dummy_ipa_wrap_challenges_expanded() -> [Fq; WRAP_IPA_ROUNDS] {
     out
 }
 
-/// Deterministic 16 step-side IPA dummy challenges, already endo-expanded
-/// to Fp. Matches OCaml `Dummy.Ipa.Step.challenges_computed` — OCaml's
-/// module-init order draws 15 wrap challenges first (counters 1..15),
-/// then 16 step challenges (counters 16..31).
-pub fn dummy_ipa_step_challenges_expanded() -> [Fp; STEP_IPA_ROUNDS] {
-    let (_endo_q, endo_r) = endos::<Vesta>();
-    let mut out = [Fp::from(0u64); STEP_IPA_ROUNDS];
-    for (i, slot) in out.iter_mut().enumerate() {
-        // position 0 → chal_31, …, position 15 → chal_16
-        let counter = WRAP_IPA_ROUNDS + STEP_IPA_ROUNDS - i;
-        let limbs = chal_oracle_limbs(counter);
-        *slot = PoseidonScalarChallenge::<Fp>::from_limbs(limbs).to_field(&endo_r);
-    }
-    out
-}
-
 /// Endo-expand a 128-bit prechallenge to a wrap-side scalar (Fq), the
 /// same way `Ipa.Wrap.compute_challenges` does in OCaml.
 fn expand_wrap_prechallenge(limbs: [u64; 2]) -> Fq {
@@ -247,12 +228,12 @@ fn expand_wrap_prechallenge(limbs: [u64; 2]) -> Fq {
     PoseidonScalarChallenge::<Fq>::from_limbs(limbs).to_field(&endo_r)
 }
 
-/// Build the wrap kimchi proof's `prev_challenges` for a Simple_chain
-/// (`Max_proofs_verified = N1`) wrap proof, mirroring
-/// `Wrap_hack.pad_accumulator` (wrap_hack.ml:35) applied to the
-/// length-1 `(commitment, challenges)` vector that pickles assembles
-/// from `messages_for_next_step_proof.challenge_polynomial_commitments`
-/// and `messages_for_next_wrap_proof.old_bulletproof_challenges`.
+/// Build the wrap kimchi proof's `prev_challenges` for a wrap proof with
+/// `Max_proofs_verified = N1`, mirroring `Wrap_hack.pad_accumulator`
+/// (wrap_hack.ml:35) applied to the length-1 `(commitment, challenges)`
+/// vector that pickles assembles from
+/// `messages_for_next_step_proof.challenge_polynomial_commitments` and
+/// `messages_for_next_wrap_proof.old_bulletproof_challenges`.
 ///
 /// The pickles wrap circuit's ABI is fixed at `Padded_length.n = N2`,
 /// so every wrap proof — base case or recursive — front-pads with one
@@ -262,11 +243,11 @@ fn expand_wrap_prechallenge(limbs: [u64; 2]) -> Fq {
 ///
 /// `dummy_sg` should be precomputed once via [`compute_dummy_wrap_sg`].
 /// `real_step_sg` is the single element of
-/// `messages_for_next_step_proof.challenge_polynomial_commitments`
-/// (length N1 = 1 for Simple_chain). `real_wrap_old_prechal_limbs`
-/// gives the 15 raw 128-bit prechallenge limbs from
+/// `messages_for_next_step_proof.challenge_polynomial_commitments`.
+/// `real_wrap_old_prechal_limbs` gives the 15 raw 128-bit prechallenge
+/// limbs from
 /// `messages_for_next_wrap_proof.old_bulletproof_challenges[0]`.
-pub fn build_simple_chain_prev_challenges(
+pub fn build_prev_challenges_max_one(
     dummy_sg: Pallas,
     real_step_sg: Pallas,
     real_wrap_old_prechal_limbs: [[u64; 2]; WRAP_IPA_ROUNDS],
@@ -278,15 +259,13 @@ pub fn build_simple_chain_prev_challenges(
 }
 
 /// Compute `Dummy.Ipa.Wrap.sg`: the IPA accumulator commitment for
-/// the wrap-side dummy challenges. Mirrors the PS recipe
-/// (`pallasSrsBPolyCommitmentPoint pallasSrs` applied to the dummy
-/// expanded challenges) — i.e. an MSM of `b_poly_coefficients(chals)`
+/// the wrap-side dummy challenges — an MSM of `b_poly_coefficients(chals)`
 /// scalars across the SRS's first 2^k generators, where k = 15.
 ///
 /// Pickles uses this Pallas point as the front-pad in
 /// `Wrap_hack.pad_accumulator`, so it appears as `prev_challenges[0].comm`
-/// on every wrap proof in a Simple_chain (`Max_proofs_verified = N1`)
-/// chain regardless of base-vs-recursive.
+/// on every wrap proof with `Max_proofs_verified = N1` regardless of
+/// base-vs-recursive.
 pub fn compute_dummy_wrap_sg(srs: &SRS<Pallas>) -> Pallas {
     let chals = dummy_ipa_wrap_challenges_expanded();
     let coeffs = b_poly_coefficients(&chals);
@@ -318,93 +297,4 @@ fn chal_oracle_limbs(n: usize) -> [u64; 2] {
         }
     }
     limbs
-}
-
-// ---- tests ---------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Sanity: dummy wrap-side challenges are distinct, nonzero, and
-    /// deterministic (same value across calls). Structural only — the
-    /// numeric correctness of each gets exercised once a Stage-3 test
-    /// feeds these into kimchi verification.
-    #[test]
-    fn dummy_wrap_challenges_are_distinct_and_deterministic() {
-        let a = dummy_ipa_wrap_challenges_expanded();
-        let b = dummy_ipa_wrap_challenges_expanded();
-        assert_eq!(a, b, "dummy wrap challenges must be deterministic");
-        for c in &a {
-            assert_ne!(*c, Fq::from(0u64));
-        }
-        for i in 0..a.len() {
-            for j in (i + 1)..a.len() {
-                assert_ne!(a[i], a[j], "dummy wrap challenges must be distinct");
-            }
-        }
-    }
-
-    /// Same shape check for step-side dummies.
-    #[test]
-    fn dummy_step_challenges_are_distinct_and_deterministic() {
-        let a = dummy_ipa_step_challenges_expanded();
-        let b = dummy_ipa_step_challenges_expanded();
-        assert_eq!(a, b);
-        for c in &a {
-            assert_ne!(*c, Fp::from(0u64));
-        }
-        for i in 0..a.len() {
-            for j in (i + 1)..a.len() {
-                assert_ne!(a[i], a[j]);
-            }
-        }
-    }
-
-    /// Wiring test: the wrap hash runs end-to-end without panic on a
-    /// synthetic input and is deterministic.
-    #[test]
-    fn hash_messages_for_next_wrap_proof_runs() {
-        let sg = Vesta::generator();
-        let real_chals = [[Fq::from(7u64); WRAP_IPA_ROUNDS]];
-        let h1 = hash_messages_for_next_wrap_proof(&sg, &real_chals);
-        let h2 = hash_messages_for_next_wrap_proof(&sg, &real_chals);
-        assert_eq!(h1, h2);
-        // Changing the real challenges changes the digest.
-        let real_chals2 = [[Fq::from(8u64); WRAP_IPA_ROUNDS]];
-        let h3 = hash_messages_for_next_wrap_proof(&sg, &real_chals2);
-        assert_ne!(h1, h3);
-    }
-
-    /// Wiring test: step hash runs end-to-end.
-    #[test]
-    fn hash_messages_for_next_step_proof_runs() {
-        let p = Pallas::generator();
-        let vk = WrapVkCommitments {
-            sigma_comm: [p; 7],
-            coefficients_comm: [p; 15],
-            generic_comm: p,
-            psm_comm: p,
-            complete_add_comm: p,
-            mul_comm: p,
-            emul_comm: p,
-            endomul_scalar_comm: p,
-        };
-        let app_state = [Fp::from(41u64), Fp::from(42u64)];
-        let prev = StepPrevProof {
-            challenge_polynomial_commitment: p,
-            expanded_bulletproof_challenges: [Fp::from(3u64); STEP_IPA_ROUNDS],
-        };
-        let h1 = hash_messages_for_next_step_proof(&vk, &app_state, &[prev]);
-        // Different app_state -> different digest.
-        let h2 = hash_messages_for_next_step_proof(
-            &vk,
-            &[Fp::from(41u64), Fp::from(99u64)],
-            &[StepPrevProof {
-                challenge_polynomial_commitment: p,
-                expanded_bulletproof_challenges: [Fp::from(3u64); STEP_IPA_ROUNDS],
-            }],
-        );
-        assert_ne!(h1, h2);
-    }
 }

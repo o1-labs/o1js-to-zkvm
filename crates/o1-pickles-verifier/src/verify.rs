@@ -1,7 +1,7 @@
-//! Slim Simple_chain wrap-proof verification pipeline for the SP1
-//! guest. The expensive `expand_deferred` walk + the wrap-side
-//! messages digest now live on the host (see [`host_precompute`]);
-//! the guest only does what's *load-bearing for binding `app_state`*:
+//! Slim wrap-proof verification pipeline for the SP1 guest. The
+//! expensive `expand_deferred` walk plus the wrap-side messages digest
+//! live on the host (see [`host_precompute`]); the guest only does what
+//! is load-bearing for binding `app_state`:
 //!
 //! 1. Hash the input statement bytes (so the end-verifier can
 //!    recognize "this exact serialized statement was attested to").
@@ -26,7 +26,6 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use ark_ff::{BigInt, PrimeField};
 use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
 use groupmap::GroupMap;
 use kimchi::circuits::constraints::FeatureFlags;
@@ -34,9 +33,9 @@ use kimchi::circuits::lookup::lookups::{LookupFeatures, LookupPatterns};
 use kimchi::circuits::polynomials::permutation::Shifts;
 use kimchi::linearization::expr_linearization;
 use kimchi::proof::RecursionChallenge;
-use mina_poseidon::pasta::fp_kimchi;
+use mina_poseidon::pasta::{fp_kimchi, FULL_ROUNDS};
 use poly_commitment::commitment::PolyComm;
-use poly_commitment::ipa::{endos, SRS};
+use poly_commitment::ipa::endos;
 use sha2::{Digest as Sha2Digest, Sha256};
 
 use o1_verifier_lib::{load_pallas_verifier_index, PallasProof};
@@ -44,13 +43,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::deferred::{endo_expand_scalar, expand_deferred, ExpandDeferredInput};
 use crate::messages::{
-    build_simple_chain_prev_challenges, hash_messages_for_next_step_proof,
+    build_prev_challenges_max_one, hash_messages_for_next_step_proof,
     hash_messages_for_next_wrap_proof, StepPrevProof, WrapVkCommitments, STEP_IPA_ROUNDS,
     WRAP_IPA_ROUNDS,
 };
 use crate::pack::{assemble_wrap_main_input, AssembleInput};
 use crate::parse::{parse_wrap_statement, ParsedPrevEvals};
-use crate::statement::{Challenge, Digest, ScalarChallenge, WrapStatement};
+use crate::statement::{Challenge, ScalarChallenge, WrapStatement};
 use crate::wire::ProofReprWire;
 use crate::{Fp, Fq, Pallas, Vesta};
 
@@ -66,11 +65,10 @@ pub enum VerifyError {
 /// What the SP1 guest commits as its public output:
 ///
 /// * `valid`: whether kimchi accepted.
-/// * `app_state`: the application circuit's public input
-///   (`Vec<Fp>` — for Simple_chain, `[initial, current]`). Bound into
-///   the wrap public input via Poseidon, so a kimchi-accepted run
-///   means the guest's `app_state` matches what the wrap circuit was
-///   committed against.
+/// * `app_state`: the application circuit's public input as a flat
+///   `Vec<Fp>`. Bound into the wrap public input via Poseidon, so a
+///   kimchi-accepted run means the guest's `app_state` matches what
+///   the wrap circuit was committed against.
 /// * `statement_digest`: SHA-256 over the statement msgpack bytes the
 ///   guest was fed. Lets a holder of the original serialized statement
 ///   verify "the SP1 proof attests to *my* statement, not just one
@@ -86,13 +84,9 @@ pub struct CommitOutput {
     pub statement_digest: [u8; 32],
 }
 
-/// Constants fixed by the wrap circuit + its SRS — everything we can
-/// precompute once at SP1 build time and bake into the guest.
+/// Constants fixed by the wrap circuit — everything we can precompute
+/// once at SP1 build time and bake into the guest.
 pub struct WrapVerifySetup<'a> {
-    /// `Dummy.Ipa.Wrap.sg` — the Pallas point that
-    /// `Wrap_hack.pad_accumulator` uses as the front-padding entry's
-    /// commitment. Function only of the (fixed) wrap SRS.
-    pub dummy_sg: Pallas,
     /// 28 single-chunk wrap-VK commitments, in
     /// `index_to_field_elements` order. Constant per circuit.
     pub vk_commitments: &'a WrapVkCommitments,
@@ -130,11 +124,6 @@ pub struct HostPrecomputed {
     pub wrap_messages_digest_fq: Fq,
 }
 
-fn digest_to_fp(d: &Digest) -> Fp {
-    let bi: BigInt<4> = BigInt::new(d.0);
-    Fp::from_bigint(bi).expect("sponge digest fits in Fp")
-}
-
 fn build_prev_challenges(
     stmt: &WrapStatement,
     dummy_sg: Pallas,
@@ -156,7 +145,7 @@ fn build_prev_challenges(
             .inner
             .0
     });
-    let pairs = build_simple_chain_prev_challenges(dummy_sg, real_sg, real_limbs);
+    let pairs = build_prev_challenges_max_one(dummy_sg, real_sg, real_limbs);
     pairs
         .into_iter()
         .map(|(sg, chals)| RecursionChallenge {
@@ -172,9 +161,19 @@ fn build_prev_challenges(
 /// kimchi *binds anyway*, and only does the `app_state`-binding step
 /// digest itself plus the SHA-256 of the input statement bytes.
 ///
-/// Returns `(app_state, statement_digest)` on success. `wrap_proof_bytes`
-/// must already carry populated `prev_challenges` (host writes them
-/// before encoding).
+/// `wrap_vi_bytes` and `wrap_srs_bytes` are separate because kimchi's
+/// `VerifierIndex` serialization marks `srs` as `#[serde(skip)]` (the
+/// SRS is large and shared across many circuits, so it lives in its
+/// own blob). [`load_pallas_verifier_index`] stitches them together
+/// into `vi.srs`.
+///
+/// `proof_repr_msgpack` is the canonical msgpack of [`ProofReprWire`]
+/// (statement + prev_evals); we consume the statement and hash the
+/// bytes for `statement_digest`. `wrap_proof_bytes` is the kimchi
+/// `ProverProof` msgpack — a separate serialization since pickles'
+/// proof_repr JSON carries the kimchi proof in a shape that's awkward
+/// to round-trip directly into kimchi's serde format. The host
+/// populates `prev_challenges` before encoding `wrap_proof_bytes`.
 pub fn verify_wrap_proof_precomputed(
     setup: &WrapVerifySetup<'_>,
     wrap_vi_bytes: &[u8],
@@ -183,8 +182,6 @@ pub fn verify_wrap_proof_precomputed(
     wrap_proof_bytes: &[u8],
     precomputed_msgpack: &[u8],
 ) -> Result<(Vec<Fp>, [u8; 32]), VerifyError> {
-    // Hash the statement bytes first — independent of any decoding,
-    // so even malformed input still produces a digest the host knows.
     let statement_digest: [u8; 32] = Sha256::digest(proof_repr_msgpack).into();
 
     let repr: ProofReprWire =
@@ -196,17 +193,11 @@ pub fn verify_wrap_proof_precomputed(
 
     let wrap_vi = load_pallas_verifier_index(wrap_vi_bytes, wrap_srs_bytes);
 
-    let mut wrap_proof: PallasProof =
+    let wrap_proof: PallasProof =
         rmp_serde::from_slice(wrap_proof_bytes).map_err(|_| VerifyError::DecodeWrapProof)?;
-    // If the host left prev_challenges empty (older fixture format),
-    // reconstruct them. Otherwise trust what's there — kimchi
-    // rejects if they're wrong.
-    if wrap_proof.prev_challenges.is_empty() {
-        wrap_proof.prev_challenges = build_prev_challenges(&stmt, setup.dummy_sg);
-    }
 
     let (_endo_q_step, endo_r_step) = endos::<Vesta>();
-    let sponge_digest_fp = digest_to_fp(&stmt.proof_state.sponge_digest_before_evaluations);
+    let sponge_digest_fp = stmt.proof_state.sponge_digest_before_evaluations.to_fp();
 
     // Step-side messages digest — the binding hop for `app_state`.
     // Stays in-guest so the SP1 attestation links `app_state` to the
@@ -262,21 +253,25 @@ pub fn verify_wrap_proof_precomputed(
     });
     let packed: Vec<Fq> = packed_struct.to_fq_vec();
 
+    // `Map::setup()` does 1 square root + 2 modular inverses over the
+    // Pallas base field — non-trivial in the SP1 zkVM since we don't
+    // have a Pasta-curve precompile. Worth baking via build.rs as a
+    // follow-up; for now we just call it.
     let group_map = <Pallas as poly_commitment::commitment::CommitmentCurve>::Map::setup();
     kimchi::verifier::verify::<
-        55,
+        FULL_ROUNDS,
         Pallas,
         mina_poseidon::sponge::DefaultFqSponge<
             mina_curves::pasta::PallasParameters,
             mina_poseidon::constants::PlonkSpongeConstantsKimchi,
-            55,
+            FULL_ROUNDS,
         >,
         mina_poseidon::sponge::DefaultFrSponge<
             Fq,
             mina_poseidon::constants::PlonkSpongeConstantsKimchi,
-            55,
+            FULL_ROUNDS,
         >,
-        poly_commitment::ipa::OpeningProof<Pallas, 55>,
+        poly_commitment::ipa::OpeningProof<Pallas, FULL_ROUNDS>,
     >(&group_map, &wrap_vi, &wrap_proof, &packed)
     .map_err(|_| VerifyError::KimchiReject)?;
 
@@ -286,16 +281,19 @@ pub fn verify_wrap_proof_precomputed(
     ))
 }
 
-/// Run `expand_deferred` + the wrap-side messages digest on the host,
-/// producing the [`HostPrecomputed`] blob the guest consumes.
-///
-/// Lives in `verify.rs` (no_std-compatible) because every helper it
-/// uses already works without std. The host CLI wraps this in the
-/// usual JSON-decode + msgpack-encode shuttle.
-pub fn host_precompute(stmt: &WrapStatement, prev: &ParsedPrevEvals) -> HostPrecomputed {
+/// Standard pickles zk-rows count.
+pub const ZK_ROWS: u32 = 3;
+
+/// Run `expand_deferred` over a parsed `(WrapStatement, ParsedPrevEvals)`
+/// pair. Encapsulates the step-domain / linearization / endo-expansion
+/// plumbing that's the same for every pickles verifier call. Returns the
+/// full `ExpandedDeferred` so callers can pull whatever they need.
+pub fn expand_deferred_for_statement(
+    stmt: &WrapStatement,
+    prev: &ParsedPrevEvals,
+) -> crate::deferred::ExpandedDeferred<Fp> {
     let domain_log2: u32 = u32::from(stmt.proof_state.deferred_values.branch_data.domain_log2);
     let (_endo_q_step, endo_r_step) = endos::<Vesta>();
-    let (_endo_q_wrap, endo_r_wrap) = endos::<Pallas>();
 
     let sponge_params_step = fp_kimchi::static_params();
     let mds_step = &sponge_params_step.mds;
@@ -338,10 +336,10 @@ pub fn host_precompute(stmt: &WrapStatement, prev: &ParsedPrevEvals) -> HostPrec
         })
         .collect();
 
-    let sponge_digest_fp = digest_to_fp(&stmt.proof_state.sponge_digest_before_evaluations);
+    let sponge_digest_fp = stmt.proof_state.sponge_digest_before_evaluations.to_fp();
     let public_input_chunks = [prev.public_evals.zeta];
 
-    let expanded = expand_deferred::<Fp>(ExpandDeferredInput {
+    expand_deferred::<Fp>(ExpandDeferredInput {
         plonk_minimal: &stmt.proof_state.deferred_values.plonk,
         bulletproof_challenges: &stmt.proof_state.deferred_values.bulletproof_challenges,
         sponge_digest_before_evaluations: sponge_digest_fp,
@@ -353,7 +351,7 @@ pub fn host_precompute(stmt: &WrapStatement, prev: &ParsedPrevEvals) -> HostPrec
         shifts,
         generator,
         domain_log2,
-        zk_rows: 3,
+        zk_rows: ZK_ROWS,
         srs_length_log2: STEP_IPA_ROUNDS as u32,
         endo: endo_r_step,
         linearization_endo_coefficient: endos::<Pallas>().0,
@@ -362,8 +360,15 @@ pub fn host_precompute(stmt: &WrapStatement, prev: &ParsedPrevEvals) -> HostPrec
         mds: mds_step,
         sponge_params: sponge_params_step,
     })
-    .expect("expand_deferred");
+    .expect("expand_deferred")
+}
 
+/// Run `expand_deferred` + the wrap-side messages digest on the host,
+/// producing the [`HostPrecomputed`] blob the guest consumes.
+pub fn host_precompute(stmt: &WrapStatement, prev: &ParsedPrevEvals) -> HostPrecomputed {
+    let expanded = expand_deferred_for_statement(stmt, prev);
+
+    let (_endo_q_wrap, endo_r_wrap) = endos::<Pallas>();
     let wrap_old_bp_chals_expanded: Vec<[Fq; WRAP_IPA_ROUNDS]> = stmt
         .proof_state
         .messages_for_next_wrap_proof
@@ -392,9 +397,8 @@ pub fn host_precompute(stmt: &WrapStatement, prev: &ParsedPrevEvals) -> HostPrec
     }
 }
 
-/// Populate a wrap proof's `prev_challenges` from the statement +
-/// baked dummy_sg, so the host can ship the proof bytes with that
-/// field already filled in (the guest doesn't have to reconstruct).
+/// Populate a wrap proof's `prev_challenges` from the statement, so the
+/// host can ship the proof bytes with that field already filled in.
 /// Mirrors what's in `Wrap_hack.pad_accumulator`.
 pub fn host_populate_prev_challenges(
     proof: &mut PallasProof,
@@ -402,10 +406,4 @@ pub fn host_populate_prev_challenges(
     dummy_sg: Pallas,
 ) {
     proof.prev_challenges = build_prev_challenges(stmt, dummy_sg);
-}
-
-/// Compute `Dummy.Ipa.Wrap.sg` from a deserialized SRS. Convenience
-/// re-export so host callers don't have to import from `messages`.
-pub fn host_dummy_wrap_sg(srs: &SRS<Pallas>) -> Pallas {
-    crate::messages::compute_dummy_wrap_sg(srs)
 }

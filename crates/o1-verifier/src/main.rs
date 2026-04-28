@@ -1,10 +1,9 @@
-//! SP1 zkVM guest: slim Simple_chain wrap-proof verifier.
+//! SP1 zkVM guest: slim wrap-proof verifier.
 //!
 //! Build-time constants (embedded via `OUT_DIR` / `include_bytes!`,
 //! see `build.rs`):
 //!  - `simple_chain_wrap_vi.bin` / `simple_chain_wrap_srs.bin`: raw
 //!    msgpack the kimchi verifier consumes.
-//!  - `dummy_wrap_sg.bin`: `Wrap_hack.pad_accumulator`'s front-pad.
 //!  - `vk_commitments.bin`: 28 single-chunk wrap-VK commitments.
 //!
 //! Runtime stdin (in order):
@@ -38,20 +37,15 @@ use ark_serialize::CanonicalDeserialize;
 
 use o1_pickles_verifier::messages::WrapVkCommitments;
 use o1_pickles_verifier::verify::{verify_wrap_proof_precomputed, CommitOutput, WrapVerifySetup};
-use o1_pickles_verifier::Pallas;
 
 static WRAP_VI: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/simple_chain_wrap_vi.bin"));
 static WRAP_SRS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/simple_chain_wrap_srs.bin"));
-static DUMMY_WRAP_SG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dummy_wrap_sg.bin"));
 static VK_COMMITMENTS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vk_commitments.bin"));
 
 pub fn main() {
-    let dummy_sg = Pallas::deserialize_compressed(DUMMY_WRAP_SG)
-        .expect("baked dummy_wrap_sg.bin failed to deserialize");
     let vk_commitments = WrapVkCommitments::deserialize_compressed(VK_COMMITMENTS)
         .expect("baked vk_commitments.bin failed to deserialize");
     let setup = WrapVerifySetup {
-        dummy_sg,
         vk_commitments: &vk_commitments,
     };
 

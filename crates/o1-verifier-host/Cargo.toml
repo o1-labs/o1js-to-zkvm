@@ -9,14 +9,14 @@ path = "src/main.rs"
 
 [dependencies]
 o1-pickles-verifier = { path = "../o1-pickles-verifier", features = ["std"] }
-o1-verifier-lib = { path = "../o1-verifier-lib", features = ["std"] }
+o1-verifier-lib = { path = "../o1-verifier-lib" }
 poly-commitment = { workspace = true }
 sp1-sdk = { workspace = true }
-serde_json = { version = "1" }
-rmp-serde = "1"
-sha2 = "0.10"
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
+serde_json = { workspace = true, features = ["std"] }
+rmp-serde = { workspace = true }
+sha2 = { workspace = true, features = ["std"] }
+clap = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
 sp1-build = { workspace = true }

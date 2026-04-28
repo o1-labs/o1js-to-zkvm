@@ -1,4 +1,4 @@
-# Architecture: Simple_chain wrap-proof verification in SP1
+# Architecture: wrap-proof verification in SP1
 
 This document explains what data flows where, and why, in the Rust+SP1 verifier. It complements (it does not replace) the Pickles glossary in `mina/src/lib/crypto/pickles/pickles.mli`.
 
@@ -22,33 +22,32 @@ This document explains what data flows where, and why, in the Rust+SP1 verifier.
    per-circuit)
 
 
-  ┌──────────────┐     ┌─────────┐     ┌──────────────────────┐
-  │   build.rs   │     │  Host   │     │   Guest (SP1)        │
-  │              │     │ o1zkvm  │     │   o1-verifier        │
-  └──────┬───────┘     └────┬────┘     └─────────┬────────────┘
-         │                  │                    │
-   bakes constants:         │                    │
-   - VI/SRS bytes           │                    │
-   - dummy_sg (Pallas)      │                    │
-   - vk_commitments         │                    │
-         │                  │                    │
-         └──────► OUT_DIR ──┼──────────►  include_bytes!
-                            │                    │
-                            │  parses JSON,      │
-                            │  rmp-encodes wire  │
-                            │                    │
-                            └──── stdin ────────►│
-                                                 │
-                                            verify pipeline
-                                                 │
-                                                 ▼
-                                          CommitOutput {
-                                            valid: bool,
-                                            app_state: Vec<Fp>,
-                                            statement_digest: [u8; 32],
-                                          }
-                                                 │
-                            (Groth16 wrapper consumes this)
+  ┌──────────────┐     ┌──────────────────────┐     ┌─────────┐
+  │   build.rs   │     │   Guest (SP1)        │     │  Host   │
+  │              │     │   o1-verifier        │     │ o1zkvm  │
+  └──────┬───────┘     └─────────┬────────────┘     └────┬────┘
+         │                       │                       │
+   bakes constants:              │                       │
+   - VI/SRS bytes                │                       │
+   - vk_commitments              │                       │
+         │                       │                       │
+         └─► OUT_DIR ──► include_bytes!                  │
+                                 │                       │
+                                 │ ◄──── stdin ──────────┤
+                                 │                       │
+                            verify pipeline              │
+                                 │                       │
+                                 ▼                       │
+                          CommitOutput {                 │
+                            valid: bool,                 │
+                            app_state: Vec<Fp>,          │
+                            statement_digest: [u8; 32],  │
+                          }                              │
+                                 │                       │
+                                 └─── public values ────►│
+                                                         │
+                                              (Groth16 wrapper
+                                               consumes this)
 ```
 
 ## Terminology
@@ -111,8 +110,8 @@ The 40-element `Vec<Fq>` that kimchi's verifier consumes as the wrap proof's *pu
 | 10..13 | three Poseidon digests (sponge / msgs-for-next-wrap / msgs-for-next-step) |
 | 13..29 | 16 bulletproof challenges |
 | 29 | branch_data (8 bits proofs_verified + 8 bits domain_log2 packed) |
-| 30..38 | feature flag bits (8 — all zero for Simple_chain) |
-| 38..40 | lookup opt flag + opt scalar challenge (zeros for Simple_chain) |
+| 30..38 | feature flag bits (8 — none used by typical wrap circuits) |
+| 38..40 | lookup opt flag + opt scalar challenge (zero for typical circuits) |
 
 This is what the *wrap circuit* asserts its derivations equal, and what the *verifier* must hand kimchi.
 
@@ -127,7 +126,7 @@ The kimchi `ProverProof<Pallas>` produced by the wrap circuit. Lives separately 
 
 ### Dummy sg
 
-`Wrap_hack.pad_accumulator` always front-pads `prev_challenges` to length 2 with `(Dummy.Ipa.Wrap.sg, Dummy.Ipa.Wrap.challenges_computed)`. The Pallas point `dummy_sg` is the IPA accumulator commitment of the dummy challenges, computed as `MSM(b_poly_coefficients(dummy_chals), srs.g)`. Function only of the (fixed) wrap SRS — baked into the guest at build time.
+`Wrap_hack.pad_accumulator` always front-pads `prev_challenges` to length 2 with `(Dummy.Ipa.Wrap.sg, Dummy.Ipa.Wrap.challenges_computed)`. The Pallas point `dummy_sg` is the IPA accumulator commitment of the dummy challenges, computed as `MSM(b_poly_coefficients(dummy_chals), srs.g)`. Function only of the (fixed) wrap SRS. The host computes it once and stuffs it into the wrap proof's `prev_challenges` before shipping the proof bytes to the guest.
 
 ### VK commitments
 
@@ -135,11 +134,11 @@ The 28 single-chunk Pallas points pulled out of the kimchi `VerifierIndex` in `i
 
 ### `app_state`
 
-The application circuit's public input (a `Vec<Fp>`). For Simple_chain that's `[initial, current]`. Lives in `messages_for_next_step_proof.app_state`. This is what the SP1 guest commits as part of `CommitOutput` so the Groth16 wrapper can read it.
+The application circuit's public input (a `Vec<Fp>`). Lives in `messages_for_next_step_proof.app_state`. This is what the SP1 guest commits as part of `CommitOutput` so the Groth16 wrapper can read it.
 
 ## Per-artifact origins
 
-| artifact | produced by | size (Simple_chain b0) | constancy |
+| artifact | produced by | size (b0) | constancy |
 |---|---|---|---|
 | `simple_chain_wrap_vi.bin` | `Pickles.Verification_key.index` → `Kimchi_bindings.Protocol.VerifierIndex.Fq.write` | ~1.5 KB | per-circuit constant |
 | `simple_chain_wrap_srs.bin` | `index.srs` → `Kimchi_bindings.Protocol.SRS.Fq.write` | ~1.1 MB | per-circuit constant |
@@ -151,9 +150,8 @@ The application circuit's public input (a `Vec<Fp>`). For Simple_chain that's `[
 ### Build time (`crates/o1-verifier/build.rs`)
 
 1. Read `simple_chain_wrap_vi.bin` + `simple_chain_wrap_srs.bin` from `SIMPLE_CHAIN_FIXTURES_DIR`.
-2. Compute `dummy_sg` via `compute_dummy_wrap_sg(&srs)`.
-3. Extract `vk_commitments` via `WrapVkCommitments::extract(&vi)`.
-4. Serialize all four artifacts into `OUT_DIR`. The guest `include_bytes!`s them.
+2. Extract `vk_commitments` via `WrapVkCommitments::extract(&vi)`.
+3. Copy VI/SRS bytes and serialize `vk_commitments` into `OUT_DIR`. The guest `include_bytes!`s them.
 
 ### Host (`crates/o1-verifier-host/src/main.rs`)
 
@@ -173,7 +171,7 @@ Two subcommands:
 
 Slim — only the work that *binds `app_state`* into the kimchi public input stays here:
 
-1. **Deserialize baked constants.** `dummy_sg`, `vk_commitments` from `OUT_DIR` via `CanonicalDeserialize`. VI/SRS bytes pass straight to the kimchi loader.
+1. **Deserialize baked constants.** `vk_commitments` from `OUT_DIR` via `CanonicalDeserialize`. VI/SRS bytes pass straight to the kimchi loader.
 2. **Read runtime inputs** via `io::read_vec()`: `proof_repr_msgpack`, `wrap_proof_bytes` (already with `prev_challenges` populated), `host_precomputed_msgpack`.
 3. **SHA-256 the proof_repr msgpack** via SP1's precompile-patched `sha2::Sha256` → `statement_digest`. (~9.5 cycles per 64-byte block.)
 4. **rmp-decode + lower.** `ProofReprWire` → `WrapStatement` (`parse_wrap_statement`). `prev_evals` is *not* decoded in the guest — `expand_deferred` already ran on the host.
@@ -200,7 +198,7 @@ The `app_state`-binding Poseidon (step messages digest) is the one piece that *c
 
 | boundary | trusts | verifies |
 |---|---|---|
-| Build-time constants (`dummy_sg`, `vk_commitments`) | the fixtures + Rust helpers | nothing dynamic; computed once and baked |
+| Build-time constants (`vk_commitments`) | the fixtures + Rust helpers | nothing dynamic; computed once and baked |
 | Host → Guest | the wire format (rmp roundtrip) | nothing — host is untrusted with respect to the SP1 attestation |
 | Guest → kimchi verifier | the packed input being well-formed | the wrap proof against the packed input |
 | Guest → end verifier | the SP1 proof system | reads `(valid, app_state, statement_digest)` as public output |
@@ -223,7 +221,7 @@ What does the Groth16-wrapping end-verifier learn when it sees a valid SP1 proof
 
 That somewhere, *some* prover ran the SP1 guest with input bytes whose canonical `proof_repr` msgpack hashed to `D`, and:
 
-1. Those bytes parsed cleanly into a Simple_chain wrap proof and statement.
+1. Those bytes parsed cleanly into a wrap proof and statement.
 2. The `host_precompute` outputs the host supplied (cip, b, perm, zeta_to_*, wrap-side digest) were the *unique* values consistent with that proof — kimchi rejects any others, since the wrap circuit re-derives them internally and asserts equality against the public input.
 3. The Poseidon hash the guest itself computed over `(vk_commitments, X, step_prev_proofs)` is what the wrap circuit's public input contains at the step-digest slot.
 4. kimchi accepted the wrap proof against the resulting 40-Fq packed input *under the baked VI/SRS*.

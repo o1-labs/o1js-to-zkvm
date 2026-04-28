@@ -9,10 +9,6 @@
 //! The application's public input is carried opaquely as `Vec<Fp>`; we never
 //! parse app-specific structure, only consume the array for hashing via
 //! Poseidon during prepared-statement packing.
-//!
-//! Cross-reference: the PureScript port in
-//! `l-adic/snarky/packages/pickles/src/Pickles/Types.purs` defines the same
-//! layout with explicit OCaml line citations.
 
 use alloc::vec::Vec;
 use mina_curves::pasta::{Fp, Pallas, Vesta};
@@ -34,6 +30,16 @@ pub struct Challenge(pub [u64; 2]);
 ///   Pickles_base.Limb_vector.Constant.t Pickles_types.Nat.N4`.
 #[derive(Clone, Debug)]
 pub struct Digest(pub [u64; 4]);
+
+impl Digest {
+    /// Reinterpret the 4 u64 limbs (LSB-first) as a step-field
+    /// element. Mirrors OCaml `Digest.Constant.to_tick_field`.
+    pub fn to_fp(&self) -> Fp {
+        use ark_ff::{BigInt, PrimeField};
+        let bi: BigInt<4> = BigInt::new(self.0);
+        Fp::from_bigint(bi).expect("sponge digest fits in Fp")
+    }
+}
 
 /// A challenge tagged as "scalar" form — a plain wrapper used by pickles to
 /// distinguish a challenge-as-field from a challenge-as-curve-endo scalar.
@@ -139,7 +145,7 @@ pub struct ProofState {
 ///
 /// Each inner `old_bulletproof_challenges` vector has `Wrap_bp_vec.t` =
 /// `Tock.Rounds.n` = 15 elements. The outer length equals `mlmb` (the
-/// proof's type parameter) — for Simple_chain that's `N1` = 1.
+/// proof's type parameter — `N1` = 1 for `max_proofs_verified = 1`).
 #[derive(Clone, Debug)]
 pub struct MessagesForNextWrapProof {
     pub challenge_polynomial_commitment: Vesta,
@@ -154,8 +160,7 @@ pub struct MessagesForNextWrapProof {
 ///
 /// `app_state` is kept as a flat `Vec<Fp>` — whatever `Typ.value_to_fields`
 /// produced OCaml-side. Callers who want a typed view must map indices to
-/// fields themselves (e.g., for Simple_chain, `[0] = initial`, `[1] =
-/// current`).
+/// fields themselves.
 ///
 /// The commitments live on `Backend.Tock.Curve` = **Pallas** — they're the
 /// challenge polynomials over the wrap side, deferred to be verified
