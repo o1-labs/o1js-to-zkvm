@@ -1,80 +1,59 @@
-use std::fs;
-use std::str::FromStr;
+//! Host driver for the Simple_chain wrap-proof guest.
+//!
+//! Takes paths to one OCaml-emitted `proof_repr_b{N}.json` and the
+//! matching `wrap_proof_b{N}.bin`, JSON-decodes the proof_repr into
+//! the wire types, msgpack-re-encodes for the guest, and runs the
+//! SP1 zkVM. Reports whether kimchi accepts.
 
-use ark_serialize::CanonicalSerialize;
+use std::fs;
+
 use clap::Parser;
-use mina_curves::pasta::Fp;
+use o1_pickles_verifier::wire::ProofReprWire;
 use sp1_sdk::{include_elf, Elf, Prover, ProverClient, SP1Stdin};
 
 const ELF: Elf = include_elf!("o1-verifier");
 
 #[derive(Parser)]
-#[command(name = "o1-verifier-host")]
-#[command(about = "Run the o1-verifier guest program in the SP1 zkVM")]
+#[command(name = "o1zkvm")]
+#[command(about = "Verify a Simple_chain wrap proof inside the SP1 zkVM")]
 struct Cli {
-    /// Path to the proof JSON file (from the TS CLI prove command)
-    #[arg(short, long)]
-    proof: String,
-}
+    /// Path to the OCaml-emitted proof_repr JSON (e.g.
+    /// `fixtures/simple_chain_proof_repr_b0.json`).
+    #[arg(long)]
+    proof_repr: String,
 
-#[derive(serde::Deserialize)]
-struct ProofOutput {
-    proof: ProofJson,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProofJson {
-    proof: String,
-    public_input_fields: Vec<String>,
-}
-
-/// Serialize public inputs as a flat byte buffer of 32-byte canonical Fp elements.
-fn serialize_public_inputs(fields: &[Fp]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(fields.len() * 32);
-    for f in fields {
-        let mut buf = Vec::new();
-        f.serialize_compressed(&mut buf)
-            .expect("failed to serialize Fp");
-        bytes.extend_from_slice(&buf);
-    }
-    bytes
+    /// Path to the matching wrap kimchi proof msgpack (e.g.
+    /// `fixtures/simple_chain_wrap_proof_b0.bin`).
+    #[arg(long)]
+    wrap_proof: String,
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
-    let proof_json_str = fs::read_to_string(&cli.proof)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", cli.proof));
-    let proof_output: ProofOutput =
-        serde_json::from_str(&proof_json_str).expect("failed to parse proof JSON");
+    let proof_repr_json = fs::read_to_string(&cli.proof_repr)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", cli.proof_repr));
+    let proof_repr_wire: ProofReprWire = serde_json::from_str(&proof_repr_json)
+        .expect("failed to parse proof_repr JSON into ProofReprWire");
+    let proof_repr_msgpack = rmp_serde::to_vec(&proof_repr_wire)
+        .expect("failed to msgpack-encode ProofReprWire for the guest");
 
-    // Decode the proof from base64 msgpack
-    let proof_bytes = base64::decode(&proof_output.proof.proof).expect("invalid base64 in proof");
+    let wrap_proof_bytes = fs::read(&cli.wrap_proof)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", cli.wrap_proof));
 
-    // Parse public inputs as Fp field elements and serialize to canonical bytes
-    let public_input: Vec<Fp> = proof_output
-        .proof
-        .public_input_fields
-        .iter()
-        .map(|s| Fp::from_str(s).expect("invalid public input field element"))
-        .collect();
-    let public_input_bytes = serialize_public_inputs(&public_input);
-
-    // Set up SP1 stdin
     let mut stdin = SP1Stdin::new();
-    stdin.write(&proof_bytes);
-    stdin.write(&public_input_bytes);
+    stdin.write(&proof_repr_msgpack);
+    stdin.write(&wrap_proof_bytes);
 
-    // Prover mode is set via SP1_PROVER env var (mock, cpu, cuda, network).
-    // Defaults to cpu. Use SP1_PROVER=mock for dev/testing without GPU.
+    // Prover mode is set via SP1_PROVER env var (mock, cpu, network).
+    // Defaults to cpu. Use SP1_PROVER=mock for fast dev.
     let client = ProverClient::from_env().await;
     let (mut public_values, report) = client.execute(ELF, stdin).await.expect("execution failed");
 
     let valid: bool = public_values.read();
-    assert!(valid, "Kimchi proof verification failed inside SP1 zkVM");
+    assert!(valid, "kimchi rejected the wrap proof inside the SP1 zkVM");
 
-    println!("Kimchi proof verified successfully inside SP1 zkVM!");
-    println!("Execution used {} cycles", report.total_instruction_count());
+    println!("Simple_chain wrap proof verified inside SP1 zkVM");
+    println!("execution used {} cycles", report.total_instruction_count());
 }

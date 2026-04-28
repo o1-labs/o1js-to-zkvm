@@ -8,16 +8,12 @@ name = "o1zkvm"
 path = "src/main.rs"
 
 [dependencies]
+o1-pickles-verifier = { path = "../o1-pickles-verifier", features = ["std"] }
 sp1-sdk = { workspace = true }
-serde = { workspace = true }
 serde_json = { version = "1" }
 rmp-serde = "1"
-base64 = "0.13"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-mina-curves = { workspace = true }
-ark-ff = "0.5"
-ark-serialize = "0.5"
 
 [build-dependencies]
 sp1-build = { workspace = true }

@@ -2693,8 +2693,7 @@ dependencies = [
 name = "o1-verifier"
 version = "0.1.0"
 dependencies = [
- "o1-verifier-lib",
- "rmp-serde",
+ "o1-pickles-verifier",
  "sp1-zkvm",
 ]
 
@@ -2702,13 +2701,9 @@ dependencies = [
 name = "o1-verifier-host"
 version = "0.1.0"
 dependencies = [
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "base64 0.13.1",
  "clap",
- "mina-curves",
+ "o1-pickles-verifier",
  "rmp-serde",
- "serde",
  "serde_json",
  "sp1-build",
  "sp1-sdk",

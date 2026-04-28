@@ -17,13 +17,14 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use serde::de::{self, Deserializer};
-use serde::Deserialize;
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Serialize, Serializer};
 
 /// The top-level JSON dumped by `Pickles.Proof.Make(Nat.N1).to_yojson_full`,
 /// with the `app_state` splice applied on the OCaml side. We consume
 /// `statement` and `prev_evals`; `proof` (the inner wrap kimchi proof) is
 /// still parsed opaquely until Stage 3 needs it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ProofReprWire {
     pub statement: StatementWire,
     pub prev_evals: PrevEvalsWire,
@@ -31,13 +32,13 @@ pub struct ProofReprWire {
     pub proof: (),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct StatementWire {
     pub proof_state: ProofStateWire,
     pub messages_for_next_step_proof: MessagesForNextStepProofWire,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ProofStateWire {
     pub deferred_values: DeferredValuesWire,
     /// 256-bit `Digest.Constant.t`, serialized as four signed int64 limbs.
@@ -46,7 +47,7 @@ pub struct ProofStateWire {
     pub messages_for_next_wrap_proof: MessagesForNextWrapProofWire,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct DeferredValuesWire {
     pub plonk: PlonkMinimalWire,
     /// `Step_bp_vec` = Tick rounds = 16 entries.
@@ -54,7 +55,7 @@ pub struct DeferredValuesWire {
     pub branch_data: BranchDataWire,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PlonkMinimalWire {
     pub alpha: ScalarChallengeWire,
     /// Plain `Challenge.Constant.t` — two signed-int64 limbs.
@@ -66,18 +67,18 @@ pub struct PlonkMinimalWire {
 }
 
 /// `Scalar_challenge.t = { inner }` — wraps a 128-bit challenge.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ScalarChallengeWire {
     pub inner: [i64; 2],
 }
 
 /// `Bulletproof_challenge.t = { prechallenge : 'scalar_challenge }`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct BulletproofChallengeWire {
     pub prechallenge: ScalarChallengeWire,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct FeatureFlagsWire {
     pub range_check0: bool,
     pub range_check1: bool,
@@ -92,15 +93,21 @@ pub struct FeatureFlagsWire {
 /// `Branch_data.t`. OCaml serializes `proofs_verified` as the single-
 /// element array `["N1"]` (variant tag) and `domain_log2` as a one-character
 /// string whose code point is the byte value.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct BranchDataWire {
-    #[serde(deserialize_with = "parse_proofs_verified_tag")]
+    #[serde(
+        deserialize_with = "parse_proofs_verified_tag",
+        serialize_with = "emit_proofs_verified_tag"
+    )]
     pub proofs_verified: ProofsVerifiedTag,
-    #[serde(deserialize_with = "parse_single_char_u8")]
+    #[serde(
+        deserialize_with = "parse_single_char_u8",
+        serialize_with = "emit_single_char_u8"
+    )]
     pub domain_log2: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ProofsVerifiedTag {
     N0,
     N1,
@@ -139,20 +146,43 @@ fn parse_single_char_u8<'de, D: Deserializer<'de>>(d: D) -> Result<u8, D::Error>
     }
 }
 
+fn emit_proofs_verified_tag<S: Serializer>(
+    tag: &ProofsVerifiedTag,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    let label = match tag {
+        ProofsVerifiedTag::N0 => "N0",
+        ProofsVerifiedTag::N1 => "N1",
+        ProofsVerifiedTag::N2 => "N2",
+    };
+    let mut seq = s.serialize_seq(Some(1))?;
+    seq.serialize_element(label)?;
+    seq.end()
+}
+
+fn emit_single_char_u8<S: Serializer>(byte: &u8, s: S) -> Result<S::Ok, S::Error> {
+    // Mirror the OCaml emission: a one-character string whose Unicode
+    // code point equals the u8 value.
+    let c = char::from(*byte);
+    let mut buf = [0u8; 4];
+    let encoded = c.encode_utf8(&mut buf);
+    s.serialize_str(encoded)
+}
+
 /// A curve point on either Vesta (for `messages_for_next_wrap_proof`) or
 /// Pallas (for `messages_for_next_step_proof`). OCaml emits both as a
 /// two-element array of `"0x<hex>"` strings representing the base-field
 /// coordinates.
 pub type CurvePointWire = [String; 2];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct MessagesForNextWrapProofWire {
     pub challenge_polynomial_commitment: CurvePointWire,
     /// Outer length = `mlmb`; inner = `Wrap_bp_vec` = 15 entries.
     pub old_bulletproof_challenges: Vec<Vec<BulletproofChallengeWire>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct MessagesForNextStepProofWire {
     /// Populated by the OCaml `inject_app_state` step — decimal-string
     /// field elements, one per slot in the step circuit's typed
@@ -180,7 +210,7 @@ pub struct MessagesForNextStepProofWire {
 
 /// `{ evals; ft_eval1 }` — the step proof's polynomial evaluations carried
 /// by the wrap proof.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PrevEvalsWire {
     pub evals: EvalsWithPublicInputWire,
     pub ft_eval1: String,
@@ -190,7 +220,7 @@ pub struct PrevEvalsWire {
 /// `(zeta, zeta_omega)` pair (OCaml collapses the chunk arrays in
 /// `Proof.Make.to_repr`) and `evals` is the kimchi-shape
 /// `ProofEvaluations<PointEvaluations<chunk_array>>`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct EvalsWithPublicInputWire {
     pub public_input: [String; 2],
     pub evals: KimchiEvalsWire,
@@ -204,7 +234,7 @@ pub type PointEvalsChunkedWire = [Vec<String>; 2];
 
 /// Direct mirror of kimchi's `ProofEvaluations` shape as pickles emits it.
 /// Field order and names match `proof-systems/kimchi/src/proof.rs:50`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct KimchiEvalsWire {
     /// 15 witness columns.
     pub w: Vec<PointEvalsChunkedWire>,
