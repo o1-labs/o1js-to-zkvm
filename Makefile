@@ -1,4 +1,4 @@
-.PHONY: help install deps build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests lint-check lint
+.PHONY: help install deps build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests rust-e2e-tests-profile lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
@@ -36,6 +36,9 @@ ts-e2e-tests: build-ts ## Run the TypeScript CLI end-to-end script
 
 rust-e2e-tests: ## Run the full Rust+SP1 end-to-end script
 	./scripts/rust-e2e-test.sh
+
+rust-e2e-tests-profile: ## Run e2e under SP1's sampling profiler (Gecko JSON; view at profiler.firefox.com)
+	./scripts/rust-e2e-test-profile.sh
 
 lint-check: ## Run all linters and formatters in check-only mode
 	npm run format:check

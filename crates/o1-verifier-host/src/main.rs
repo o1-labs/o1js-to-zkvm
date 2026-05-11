@@ -77,4 +77,10 @@ async fn main() {
 
     println!("Kimchi proof verified successfully inside SP1 zkVM!");
     println!("Execution used {} cycles", report.total_instruction_count());
+
+    let mut entries: Vec<(&String, &u64)> = report.cycle_tracker.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (name, cycles) in entries {
+        println!("  {name}: {cycles} cycles");
+    }
 }
