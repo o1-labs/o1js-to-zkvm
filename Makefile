@@ -2,6 +2,11 @@
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
+# Default to the bundled fixture and resolve to an absolute path: cargo build
+# scripts run with a different cwd, so a relative CIRCUIT_JSON fails at build time.
+CIRCUIT_JSON ?= $(CIRCUIT_FIXTURE)
+export CIRCUIT_JSON := $(abspath $(CIRCUIT_JSON))
+
 .DEFAULT_GOAL := help
 
 help: ## Show this help menu
@@ -17,8 +22,7 @@ build-ts: ## Build the TypeScript CLI (run as `npx o1js-cli ...`)
 	npm run build
 	chmod +x dist/src/cli.js
 
-build-rust: ## Build the o1zkvm Rust binary (requires CIRCUIT_JSON env var)
-	@if [ -z "$$CIRCUIT_JSON" ]; then echo "error: CIRCUIT_JSON must be set" >&2; exit 1; fi
+build-rust: ## Build the o1zkvm Rust binary (override CIRCUIT_JSON to use a custom circuit)
 	cargo build --release -p o1-verifier-host
 
 ts-unit-tests: build-ts ## Run TypeScript unit tests
@@ -39,12 +43,12 @@ lint-check: ## Run all linters and formatters in check-only mode
 	cargo fmt --all -- --check
 	# Build the host first so the guest ELF exists for include_elf!
 	# (clippy skips build scripts, so we need to build separately)
-	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
-	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo clippy --all-targets --features std -- -D warnings
+	cargo build --release -p o1-verifier-host
+	cargo clippy --all-targets --features std -- -D warnings
 
 lint: ## Run all linters and formatters with auto-fix
 	npm run format
 	npm run lint
 	cargo fmt --all
-	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo build --release -p o1-verifier-host
-	CIRCUIT_JSON=$(CIRCUIT_FIXTURE) cargo clippy --all-targets --features std --fix --allow-dirty --allow-staged -- -D warnings
+	cargo build --release -p o1-verifier-host
+	cargo clippy --all-targets --features std --fix --allow-dirty --allow-staged -- -D warnings

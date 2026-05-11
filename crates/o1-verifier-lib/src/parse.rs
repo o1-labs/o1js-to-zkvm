@@ -41,9 +41,12 @@ fn parse_srs_point(p: &SrsPoint) -> Vesta {
     }
 }
 
-/// Parse a circuit description JSON and produce msgpack bytes for the
-/// VerifierIndex and SRS, suitable for `load_verifier_index()`.
-pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
+/// Parse a circuit description JSON into the in-memory `VerifierIndex` and
+/// `SRS` structs, without any further serialization. Useful for tests that
+/// need to compare against the parsed shape directly.
+pub fn parse_circuit_json_structured(
+    circuit_json: &str,
+) -> (crate::VestaVerifierIndex, SRS<Vesta>) {
     let circuit: CircuitDescription =
         serde_json::from_str(circuit_json).expect("failed to parse circuit JSON");
 
@@ -54,7 +57,6 @@ pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
 
     let vi: crate::VestaVerifierIndex =
         serde_json::from_str(&vk_json).expect("failed to deserialize VerifierIndex from JSON");
-    let vi_bytes = rmp_serde::to_vec(&vi).expect("failed to serialize VerifierIndex to msgpack");
 
     assert!(
         circuit.srs.len() >= 2,
@@ -66,8 +68,16 @@ pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
     let mut srs = SRS::<Vesta>::default();
     srs.h = h;
     srs.g = g;
-    let srs_bytes = rmp_serde::to_vec(&srs).expect("failed to serialize SRS to msgpack");
 
+    (vi, srs)
+}
+
+/// Parse a circuit description JSON and produce the serialized blobs for the
+/// guest: msgpack for `VerifierIndex`, pod bytes for `SRS`.
+pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
+    let (vi, srs) = parse_circuit_json_structured(circuit_json);
+    let vi_bytes = rmp_serde::to_vec(&vi).expect("failed to serialize VerifierIndex to msgpack");
+    let srs_bytes = crate::srs_layout::srs_to_pod_bytes(&srs);
     (vi_bytes, srs_bytes)
 }
 
