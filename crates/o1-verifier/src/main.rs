@@ -10,7 +10,8 @@ static VI_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/verifier_inde
 #[repr(C, align(8))]
 struct Aligned<T: ?Sized>(T);
 
-static SRS_BYTES: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/srs.bin")));
+static SRS_BYTES: &Aligned<[u8]> =
+    &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/srs.bin")));
 
 pub fn main() {
     let vi = load_verifier_index(VI_BYTES, &SRS_BYTES.0);

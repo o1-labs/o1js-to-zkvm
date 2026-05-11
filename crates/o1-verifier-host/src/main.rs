@@ -4,7 +4,7 @@ use std::str::FromStr;
 use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use mina_curves::pasta::Fp;
-use sp1_sdk::{include_elf, Elf, Prover, ProverClient, SP1Stdin};
+use sp1_sdk::{include_elf, Elf, Prover, ProverClient, ProvingKey, SP1Stdin};
 
 const ELF: Elf = include_elf!("o1-verifier");
 
@@ -15,6 +15,11 @@ struct Cli {
     /// Path to the proof JSON file (from the TS CLI prove command)
     #[arg(short, long)]
     proof: String,
+
+    /// Generate a real SP1 proof instead of just executing the program.
+    /// Backend is selected by the SP1_PROVER env var (cpu, cuda, network).
+    #[arg(long)]
+    prove: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -43,6 +48,10 @@ fn serialize_public_inputs(fields: &[Fp]) -> Vec<u8> {
 
 #[tokio::main]
 async fn main() {
+    // Pick up SP1's tracing logs. Default filter is "off" unless RUST_LOG is
+    // set, so set `RUST_LOG=info` (or higher) to see proving progress.
+    sp1_sdk::utils::setup_logger();
+
     let cli = Cli::parse();
 
     let proof_json_str = fs::read_to_string(&cli.proof)
@@ -67,14 +76,32 @@ async fn main() {
     stdin.write(&proof_bytes);
     stdin.write(&public_input_bytes);
 
-    // Prover mode is set via SP1_PROVER env var (mock, cpu, cuda, network).
-    // Defaults to cpu. Use SP1_PROVER=mock for dev/testing without GPU.
+    // Prover backend is selected by SP1_PROVER env var (mock, cpu, cuda, network).
+    // Defaults to cpu.
     let client = ProverClient::from_env().await;
-    let (mut public_values, report) = client.execute(ELF, stdin).await.expect("execution failed");
 
-    let valid: bool = public_values.read();
-    assert!(valid, "Kimchi proof verification failed inside SP1 zkVM");
+    if cli.prove {
+        let pk = client.setup(ELF).await.expect("setup failed");
+        let proof = client.prove(&pk, stdin).await.expect("prove failed");
 
-    println!("Kimchi proof verified successfully inside SP1 zkVM!");
-    println!("Execution used {} cycles", report.total_instruction_count());
+        client
+            .verify(&proof, pk.verifying_key(), None)
+            .expect("proof verification failed");
+
+        let mut public_values = proof.public_values.clone();
+        let valid: bool = public_values.read();
+        assert!(valid, "Kimchi proof verification failed inside SP1 zkVM");
+
+        println!("Kimchi proof verified successfully inside SP1 zkVM!");
+        println!("SP1 proof generated and verified.");
+    } else {
+        let (mut public_values, report) =
+            client.execute(ELF, stdin).await.expect("execution failed");
+
+        let valid: bool = public_values.read();
+        assert!(valid, "Kimchi proof verification failed inside SP1 zkVM");
+
+        println!("Kimchi proof verified successfully inside SP1 zkVM!");
+        println!("Execution used {} cycles", report.total_instruction_count());
+    }
 }
