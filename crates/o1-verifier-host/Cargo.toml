@@ -16,8 +16,8 @@ base64 = "0.13"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
-ark-ff = "0.5"
-ark-serialize = "0.5"
+ark-ff = { workspace = true, features = ["std"] }
+ark-serialize = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 sp1-build = { workspace = true }

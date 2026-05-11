@@ -58,7 +58,7 @@ pub fn feature_flags_from_vi(vi: &VestaVerifierIndex) -> FeatureFlags {
 pub fn load_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> VestaVerifierIndex {
     let mut vi: VestaVerifierIndex =
         rmp_serde::from_slice(vi_bytes).expect("failed to deserialize VerifierIndex");
-    let srs: SRS<Vesta> = rmp_serde::from_slice(srs_bytes).expect("failed to deserialize SRS");
+    let srs = srs_layout::load_srs_from_pod_bytes(srs_bytes);
     vi.srs = Arc::new(srs);
 
     let (_, endo) = Vesta::endos();
@@ -89,6 +89,8 @@ pub fn verify_kimchi_proof<R: rand::RngCore + rand::CryptoRng>(
     >(&group_map, vi, proof, public_input, rng)
     .is_ok()
 }
+
+pub mod srs_layout;
 
 // --- std-only: circuit JSON parsing ---
 
