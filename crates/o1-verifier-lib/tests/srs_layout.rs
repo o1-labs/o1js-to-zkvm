@@ -12,9 +12,11 @@ use ark_ff::BigInt;
 use mina_curves::pasta::{Fq, Vesta};
 use o1_verifier_lib::parse_circuit_json_structured;
 use o1_verifier_lib::srs_layout::{
-    load_srs_from_pod_bytes, srs_to_pod_bytes, vesta_to_pod, PodVesta,
+    load_srs_from_pod_bytes, srs_to_pod_bytes_with_basis, vesta_to_pod, PodVesta,
 };
+use poly_commitment::commitment::PolyComm;
 use poly_commitment::ipa::SRS;
+use poly_commitment::SRS as _;
 
 #[test]
 fn size_and_align_match() {
@@ -84,22 +86,57 @@ fn slice_cast_preserves_points() {
 }
 
 #[test]
-fn fixture_srs_round_trips_through_pod_bytes() {
+fn fixture_srs_and_basis_round_trip_through_pod_bytes() {
     let circuit_json = include_str!("../../../fixtures/circuit.json");
-    let (_vi, original) = parse_circuit_json_structured(circuit_json);
+    let (vi, original_srs) = parse_circuit_json_structured(circuit_json);
 
-    let encoded = srs_to_pod_bytes(&original);
+    let original_basis: Vec<PolyComm<Vesta>> =
+        (*original_srs.get_lagrange_basis(vi.domain)).clone();
+
+    let encoded = srs_to_pod_bytes_with_basis(&original_srs, &original_basis);
 
     // Re-align: a `Vec<u8>` is only 1-byte aligned. The production guest gets
     // alignment from a `#[repr(C, align(8))]` wrapper around `include_bytes!`.
     let aligned: Vec<u64> = aligned_to_8(&encoded);
     let aligned_bytes: &[u8] = &bytemuck::cast_slice(&aligned)[..encoded.len()];
 
-    let decoded: SRS<Vesta> = load_srs_from_pod_bytes(aligned_bytes);
+    let (decoded_srs, decoded_basis): (SRS<Vesta>, Vec<PolyComm<Vesta>>) =
+        load_srs_from_pod_bytes(aligned_bytes);
 
-    assert_eq!(original.h, decoded.h, "h mismatch");
-    assert_eq!(original.g.len(), decoded.g.len(), "g length mismatch");
-    assert_eq!(original.g, decoded.g, "g mismatch");
+    assert_eq!(original_srs.h, decoded_srs.h, "h mismatch");
+    assert_eq!(
+        original_srs.g.len(),
+        decoded_srs.g.len(),
+        "g length mismatch"
+    );
+    assert_eq!(original_srs.g, decoded_srs.g, "g mismatch");
+    assert_eq!(
+        original_basis.len(),
+        decoded_basis.len(),
+        "basis length mismatch"
+    );
+    assert_eq!(original_basis, decoded_basis, "basis mismatch");
+}
+
+#[test]
+fn load_verifier_index_seeds_lagrange_cache() {
+    use o1_verifier_lib::{load_verifier_index, parse_circuit_json};
+
+    let circuit_json = include_str!("../../../fixtures/circuit.json");
+    let (vi_bytes, srs_bytes) = parse_circuit_json(circuit_json);
+
+    // The production guest can't 8-align Vec<u8>, but the host runtime test
+    // can't either without a re-align step. Reuse the helper.
+    let aligned: Vec<u64> = aligned_to_8(&srs_bytes);
+    let aligned_bytes: &[u8] = &bytemuck::cast_slice(&aligned)[..srs_bytes.len()];
+
+    let vi = load_verifier_index(&vi_bytes, aligned_bytes);
+    let domain_size = vi.domain.size as usize;
+
+    assert!(
+        vi.srs.lagrange_bases().borrow().contains_key(&domain_size),
+        "expected lagrange cache to be populated after load_verifier_index"
+    );
 }
 
 /// Re-allocate a byte buffer into 8-byte aligned storage. Simulates the
