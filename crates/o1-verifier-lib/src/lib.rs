@@ -53,12 +53,32 @@ pub fn feature_flags_from_vi(vi: &VestaVerifierIndex) -> FeatureFlags {
     }
 }
 
-/// Deserialize a VerifierIndex + SRS from msgpack bytes and reconstruct
-/// all #[serde(skip)] fields needed for verification.
+/// Deserialize a VerifierIndex + SRS from msgpack/pod bytes and reconstruct
+/// all #[serde(skip)] fields needed for verification, including seeding the
+/// SRS Lagrange-basis cache from the precomputed values in `srs_bytes`.
 pub fn load_verifier_index(vi_bytes: &[u8], srs_bytes: &[u8]) -> VestaVerifierIndex {
     let mut vi: VestaVerifierIndex =
         rmp_serde::from_slice(vi_bytes).expect("failed to deserialize VerifierIndex");
-    let srs = srs_layout::load_srs_from_pod_bytes(srs_bytes);
+
+    let (srs, basis) = srs_layout::load_srs_from_pod_bytes(srs_bytes);
+    let domain_size = vi.domain.size as usize;
+    assert_eq!(
+        basis.len(),
+        domain_size,
+        "lagrange basis length {} != domain size {domain_size}",
+        basis.len()
+    );
+
+    // Pre-seed the Lagrange-basis cache. Without this, the first
+    // `verify_with_rng` call would trigger `lagrange_basis(domain)`, which
+    // is the dominant verification cost (~91% of cycles, since it walks the
+    // full SRS through an FFT-on-curve). poly-commitment is workspace-pinned
+    // with default-features=false, so `SRS::lagrange_bases()` always returns
+    // the `Rc<RefCell<HashMap>>` shape regardless of our crate's feature set.
+    srs.lagrange_bases()
+        .borrow_mut()
+        .insert(domain_size, alloc::rc::Rc::new(basis));
+
     vi.srs = Arc::new(srs);
 
     let (_, endo) = Vesta::endos();

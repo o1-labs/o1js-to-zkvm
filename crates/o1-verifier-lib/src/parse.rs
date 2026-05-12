@@ -2,7 +2,9 @@ use std::str::FromStr;
 
 use ark_serialize::CanonicalSerialize;
 use mina_curves::pasta::{Fp, Fq, Vesta};
+use poly_commitment::commitment::PolyComm;
 use poly_commitment::ipa::SRS;
+use poly_commitment::SRS as _;
 
 #[derive(serde::Deserialize)]
 pub struct CircuitDescription {
@@ -73,11 +75,18 @@ pub fn parse_circuit_json_structured(
 }
 
 /// Parse a circuit description JSON and produce the serialized blobs for the
-/// guest: msgpack for `VerifierIndex`, pod bytes for `SRS`.
+/// guest: msgpack for `VerifierIndex`, pod bytes for `SRS` plus precomputed
+/// Lagrange basis. Computing the basis here at build time amortizes ~91% of
+/// the in-guest verification cost — see `srs_layout` module docs.
 pub fn parse_circuit_json(circuit_json: &str) -> (Vec<u8>, Vec<u8>) {
     let (vi, srs) = parse_circuit_json_structured(circuit_json);
     let vi_bytes = rmp_serde::to_vec(&vi).expect("failed to serialize VerifierIndex to msgpack");
-    let srs_bytes = crate::srs_layout::srs_to_pod_bytes(&srs);
+
+    let basis_ref = srs.get_lagrange_basis(vi.domain);
+    let basis: Vec<PolyComm<Vesta>> = (*basis_ref).clone();
+    drop(basis_ref);
+
+    let srs_bytes = crate::srs_layout::srs_to_pod_bytes_with_basis(&srs, &basis);
     (vi_bytes, srs_bytes)
 }
 
