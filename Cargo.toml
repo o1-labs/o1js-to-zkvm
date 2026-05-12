@@ -4,11 +4,11 @@ members = ["crates/o1-verifier", "crates/o1-verifier-host", "crates/o1-verifier-
 exclude = ["vendor/proof-systems"]
 
 [workspace.dependencies]
-kimchi = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa", default-features = false }
-poly-commitment = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa", default-features = false }
-mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa", default-features = false }
-mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa", default-features = false }
-groupmap = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa", default-features = false }
+kimchi = { path = "vendor/proof-systems/kimchi", default-features = false }
+poly-commitment = { path = "vendor/proof-systems/poly-commitment", default-features = false }
+mina-curves = { path = "vendor/proof-systems/curves", default-features = false }
+mina-poseidon = { path = "vendor/proof-systems/poseidon", default-features = false }
+groupmap = { path = "vendor/proof-systems/groupmap", default-features = false }
 sp1-zkvm = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.2" }
 sp1-sdk = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.2" }
 sp1-build = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.2" }
@@ -18,10 +18,3 @@ ark-ff = { version = "0.5", default-features = false }
 ark-ec = { version = "0.5", default-features = false }
 ark-serialize = { version = "0.5", default-features = false }
 bytemuck = { version = "1", default-features = false, features = ["derive"] }
-
-[patch."https://github.com/o1-labs/proof-systems"]
-kimchi = { path = "vendor/proof-systems/kimchi" }
-poly-commitment = { path = "vendor/proof-systems/poly-commitment" }
-mina-curves = { path = "vendor/proof-systems/curves" }
-mina-poseidon = { path = "vendor/proof-systems/poseidon" }
-groupmap = { path = "vendor/proof-systems/groupmap" }

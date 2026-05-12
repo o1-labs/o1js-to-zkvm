@@ -15,7 +15,7 @@ rmp-serde = "1"
 base64 = "0.13"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-mina-curves = { git = "https://github.com/o1-labs/proof-systems", rev = "878e3758ff6e81e708a11e4b0286908cecbb3dfa" }
+mina-curves = { workspace = true, default-features = false }
 ark-ff = { workspace = true, features = ["std"] }
 ark-serialize = { workspace = true, features = ["std"] }
 
