@@ -49,7 +49,7 @@ prove-cuda: ## Generate a real SP1 proof on a local NVIDIA GPU (downloads sp1-gp
 lint-check: ## Run all linters and formatters in check-only mode
 	npm run format:check
 	npm run lint
-	cargo fmt --all -- --check
+	cargo fmt -p o1-verifier -p o1-verifier-host -p o1-verifier-lib -- --check
 	# Build the host first so the guest ELF exists for include_elf!
 	# (clippy skips build scripts, so we need to build separately)
 	cargo build --release -p o1-verifier-host
@@ -58,6 +58,6 @@ lint-check: ## Run all linters and formatters in check-only mode
 lint: ## Run all linters and formatters with auto-fix
 	npm run format
 	npm run lint
-	cargo fmt --all
+	cargo fmt -p o1-verifier -p o1-verifier-host -p o1-verifier-lib
 	cargo build --release -p o1-verifier-host
 	cargo clippy --all-targets --features std --fix --allow-dirty --allow-staged -- -D warnings
