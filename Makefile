@@ -1,4 +1,4 @@
-.PHONY: help install deps build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests rust-e2e-tests-profile prove-cuda lint-check lint
+.PHONY: help install deps build-ts build-rust ts-unit-tests rust-unit-tests ts-e2e-tests rust-e2e-tests rust-e2e-tests-profile prove-cpu prove-cuda lint-check lint
 
 CIRCUIT_FIXTURE := $(CURDIR)/fixtures/circuit.json
 
@@ -40,8 +40,11 @@ rust-e2e-tests: ## Run the full Rust+SP1 end-to-end script (mock prover, no GPU)
 rust-e2e-tests-profile: ## Run e2e under SP1's sampling profiler (Gecko JSON; view at profiler.firefox.com)
 	./scripts/rust-e2e-test-profile.sh
 
+prove-cpu: ## Generate a real SP1 proof on the host CPU (rayon-parallel; tune RAYON_NUM_THREADS)
+	SP1_PROVER=cpu ./scripts/rust-prove.sh
+
 prove-cuda: ## Generate a real SP1 proof on a local NVIDIA GPU (downloads sp1-gpu-server on first run)
-	./scripts/rust-prove-cuda.sh
+	SP1_PROVER=cuda ./scripts/rust-prove.sh
 
 lint-check: ## Run all linters and formatters in check-only mode
 	npm run format:check

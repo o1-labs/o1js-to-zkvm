@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Full pipeline that generates a real SP1 proof using the local CUDA GPU.
-# Requires an NVIDIA GPU and CUDA drivers; sp1-cuda will download
-# `~/.sp1/bin/sp1-gpu-server` on first run.
+# Generate a real SP1 proof end-to-end. Backend selected by SP1_PROVER:
+#   cpu     - host CPU (rayon-parallel; tune RAYON_NUM_THREADS)
+#   cuda    - local NVIDIA GPU via sp1-gpu-server
+#   network - Succinct prover network (requires creds)
+# Defaults to cpu so machines without a GPU still work.
 
-export SP1_PROVER=cuda
-# Verbose by default — long Core proofs need this to diagnose silent server
-# crashes. Override at the call site if you want quieter output.
-export RUST_LOG=${RUST_LOG:-sp1_gpu_server=debug,sp1=debug,info}
+export SP1_PROVER=${SP1_PROVER:-cpu}
+export RUST_LOG=${RUST_LOG:-info}
 CUDA_DEVICE=${CUDA_DEVICE:-0}
 SP1_GPU_SOCKET="/tmp/sp1-cuda-${CUDA_DEVICE}.sock"
 SP1_GPU_LOG="/tmp/sp1-gpu-server-${CUDA_DEVICE}.log"
@@ -80,9 +80,12 @@ npx o1js-cli prove -i "$WORK_DIR/inputs.json" -o "$WORK_DIR/proof.json"
 echo "==> Verifying Kimchi proof with TS CLI..."
 npx o1js-cli verify -c "$WORK_DIR/circuit.json" -p "$WORK_DIR/proof.json"
 
-# Step 5: Generate a real SP1 proof on GPU and verify it
-ensure_gpu_server
-echo "==> Generating real SP1 proof on CUDA..."
+# Step 5: Generate the real SP1 proof
+if [ "$SP1_PROVER" = "cuda" ]; then
+  ensure_gpu_server
+fi
+
+echo "==> Generating real SP1 proof ($SP1_PROVER)..."
 target/release/o1zkvm --proof "$WORK_DIR/proof.json" --prove
 
-echo "==> CUDA proof generation succeeded."
+echo "==> SP1 proof generation succeeded."
